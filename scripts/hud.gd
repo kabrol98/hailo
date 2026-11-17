@@ -52,12 +52,8 @@ func _ctext(y: float, t: String, sz := 18, col := C_TEXT) -> void:
 
 
 func _draw() -> void:
-	if player == null:
+	if player == null or not main.game_started:
 		return
-	match main.state:
-		"title":
-			_draw_title()
-			return
 	_draw_vignette()
 	if player.alive:
 		_draw_crosshair()
@@ -73,61 +69,13 @@ func _draw() -> void:
 			_ctext(size.y * 0.28 + 38, banner_sub, 20, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, a))
 	if player.msg_t > 0.0:
 		_ctext(size.y * 0.68, player.msg, 18, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, clampf(player.msg_t, 0.0, 1.0)))
-	match main.state:
-		"paused":
-			_draw_paused()
-		"dead":
-			_draw_dead()
+	if main.settings.get_v("show_fps"):
+		_text(Vector2(size.x - 120, 30), "%d FPS" % Engine.get_frames_per_second(), 16, C_DIM)
 
 
 func _panel(r: Rect2, a := 0.55) -> void:
 	draw_rect(r, Color(0.02, 0.05, 0.03, a))
 	draw_rect(r, Color(0.6, 0.8, 0.5, 0.25), false, 1.0)
-
-
-func _draw_title() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.03, 0.02, 0.62))
-	var y := size.y * 0.2
-	_ctext(y, "VERDANT HOLD", 72, C_ACCENT)
-	_ctext(y + 44, "JUNGLE OUTPOST  //  WAVE DEFENSE", 20, C_DIM)
-	_ctext(y + 100, "The Thorn are coming out of the trees. Hold the outpost as long as you can.", 20, C_TEXT)
-	var lines := [
-		["WASD", "move"], ["Mouse", "look"], ["Left click", "fire"], ["Right click", "aim / zoom"],
-		["Space", "jump"], ["Shift", "sprint"], ["C / Ctrl", "crouch"], ["R", "reload"],
-		["Q / wheel / 1-2", "switch weapon"], ["G", "throw frag"], ["F", "melee"], ["Esc", "pause"],
-		["[  ]", "mouse sensitivity"],
-	]
-	var top := y + 150
-	var col_w := 300.0
-	var left := size.x * 0.5 - col_w
-	for i in lines.size():
-		var cx := left + (i % 2) * col_w
-		var cy := top + (i / 2) * 28
-		_text(Vector2(cx, cy), lines[i][0], 18, C_ACCENT, HORIZONTAL_ALIGNMENT_RIGHT, 130)
-		_text(Vector2(cx + 145, cy), lines[i][1], 18, C_TEXT)
-	var ty := top + 7 * 28 + 30
-	_ctext(ty, "Shields recharge when you avoid damage. Health does not, so grab red med-packs.", 17, C_DIM)
-	_ctext(ty + 24, "Carbine: strong vs flesh, headshots once shields are down.  Arc Caster: shreds shields, can overheat.", 17, C_DIM)
-	_ctext(ty + 48, "The glowing cache inside the bunker refills ammo and frags every 30 seconds.", 17, C_DIM)
-	var pulse := 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.005)
-	_ctext(ty + 110, "CLICK TO DEPLOY", 30, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, pulse))
-	if main.best_wave > 0:
-		_ctext(ty + 150, "Best: wave %d  /  %d pts" % [main.best_wave, main.best_score], 18, C_DIM)
-
-
-func _draw_paused() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.55))
-	_ctext(size.y * 0.4, "PAUSED", 56, C_ACCENT)
-	_ctext(size.y * 0.4 + 44, "Click to resume   ·   Q to quit   ·   [ ] sensitivity: %.2f" % (main.sensitivity * 400.0), 20, C_TEXT)
-
-
-func _draw_dead() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.15, 0, 0, 0.5))
-	_ctext(size.y * 0.33, "THE OUTPOST HAS FALLEN", 52, C_WARN)
-	_ctext(size.y * 0.33 + 56, "Survived to wave %d   ·   %d kills   ·   %d pts" % [waves.wave, player.kills, player.score], 24, C_TEXT)
-	if main.new_best:
-		_ctext(size.y * 0.33 + 92, "NEW BEST", 22, C_ACCENT)
-	_ctext(size.y * 0.33 + 140, "Click or press R to redeploy", 22, C_DIM)
 
 
 func _draw_vignette() -> void:
@@ -281,9 +229,11 @@ func _draw_radar() -> void:
 	for e in get_tree().get_nodes_in_group("enemy"):
 		var v := _local_dir((e as Node3D).global_position)
 		var dist := v.length()
-		if dist > rng:
-			continue
 		var p := c + v / rng * rad
+		if dist > rng:
+			if waves.remaining() > 3:
+				continue
+			p = c + v.normalized() * rad  # last stragglers pinned to the radar edge
 		var big: bool = e.type == "bulwark"
 		draw_circle(p, 6.0 if big else 4.0, Color(1.0, 0.25, 0.2, 0.9))
 	draw_colored_polygon(PackedVector2Array([c + Vector2(0, -7), c + Vector2(5, 5), c + Vector2(-5, 5)]), C_ACCENT)

@@ -38,6 +38,11 @@ func _physics_process(delta: float) -> void:
 		if spawn_cd <= 0.0:
 			_spawn(to_spawn.pop_front())
 			spawn_cd = randf_range(0.4, 1.2)
+	# stragglers stop sniping from the treeline and close in
+	if to_spawn.is_empty() and alive_count <= 2:
+		for e in get_tree().get_nodes_in_group("enemy"):
+			e.min_range = minf(e.min_range, 5.0)
+			e.max_range = minf(e.max_range, 14.0)
 	if to_spawn.is_empty() and alive_count <= 0:
 		in_wave = false
 		intermission = 12.0

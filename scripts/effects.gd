@@ -2,6 +2,7 @@ extends RefCounted
 ## Visual effects and explosion damage helpers.
 
 const Sfx = preload("res://scripts/sfx.gd")
+const Decals = preload("res://scripts/decals.gd")
 
 static var _mat_cache: Dictionary = {}
 
@@ -159,6 +160,9 @@ static func explode(node: Node, pos: Vector3, radius: float, damage: float, kind
 	burst(w, pos, Vector3.UP, Color(0.15, 0.12, 0.1), 14, 8.0, 1.0, 0.14, 16.0, 70.0, 0.4)
 	smoke(w, pos + Vector3.UP * 0.4)
 	Sfx.play_at(w, "explosion", pos, 4.0)
+	var down := w.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(pos + Vector3.UP * 0.5, pos + Vector3.DOWN * 2.5, 1))
+	if not down.is_empty():
+		Decals.scorch(w, down.position, radius * 0.6)
 	# damage
 	var space := w.get_world_3d().direct_space_state
 	for n in tree.get_nodes_in_group("damageable"):

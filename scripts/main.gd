@@ -1,28 +1,41 @@
 extends Node3D
-## Entry point: input map, environment, world assembly, game states.
+## Entry point: input map, world assembly, settings application and game states.
+## States: home, settings, controls, playing, paused, dead
 
 const ArenaScript = preload("res://scripts/arena.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const WavesScript = preload("res://scripts/waves.gd")
 const HudScript = preload("res://scripts/hud.gd")
+const UiScript = preload("res://scripts/ui.gd")
+const SettingsScript = preload("res://scripts/settings.gd")
+const AtmosphereScript = preload("res://scripts/atmosphere.gd")
+const Shaders = preload("res://scripts/shaders.gd")
+const Decals = preload("res://scripts/decals.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 
-const SAVE_PATH := "user://verdant_hold.cfg"
+const STATS_PATH := "user://verdant_hold.cfg"
 
+var settings: Node
 var world: Node3D
+var atmosphere: Node3D
 var arena: Node3D
 var player: CharacterBody3D
 var waves: Node
 var hud: Control
-var state := "title"
-var sensitivity := 0.0025
+var ui: Control
+var menu_cam: Camera3D
+var state := "home"
+var game_started := false
 var best_wave := 0
 var best_score := 0
 var new_best := false
+var _orbit_t := 0.0
 
 var autotest := false
 var autotest_time := 0.0
 var autotest_limit := 90.0
+var _shot_i := 0
+var _shot_dir := ""
 
 
 func _ready() -> void:
@@ -32,15 +45,31 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--seconds="):
 			autotest_limit = float(a.get_slice("=", 1))
+		elif a.begins_with("--shots="):
+			_shot_dir = a.get_slice("=", 1)
+	settings = SettingsScript.new()
+	settings.name = "Settings"
+	add_child(settings)
+	for a in args:
+		if a.begins_with("--tod="):
+			settings.values["time_of_day"] = a.get_slice("=", 1)
+		elif a.begins_with("--preset="):
+			var pn := a.get_slice("=", 1)
+			settings.values["preset"] = pn
+			for k in SettingsScript.PRESETS[pn].keys():
+				settings.values[k] = SettingsScript.PRESETS[pn][k]
 	_setup_input()
-	_load()
+	_load_stats()
 	Sfx.preload_all()
+	Decals.clear()
 	world = Node3D.new()
 	world.name = "World"
 	world.process_mode = Node.PROCESS_MODE_PAUSABLE
 	world.add_to_group("world")
 	add_child(world)
-	_setup_environment()
+	atmosphere = AtmosphereScript.new()
+	atmosphere.name = "Atmosphere"
+	world.add_child(atmosphere)
 	var t0 := Time.get_ticks_msec()
 	arena = ArenaScript.new()
 	arena.name = "Arena"
@@ -50,8 +79,7 @@ func _ready() -> void:
 	player = PlayerScript.new()
 	player.name = "Player"
 	world.add_child(player)
-	player.global_position = arena.player_spawn
-	player.mouse_sens = sensitivity
+	player.global_position = arena.player_spawn + Vector3.UP * arena.height_at(arena.player_spawn.x, arena.player_spawn.z)
 	player.autobot = autotest
 	player.godmode = args.has("--godmode")
 	player.died.connect(_on_player_died)
@@ -60,21 +88,35 @@ func _ready() -> void:
 	waves.spawn_points = arena.spawn_points
 	waves.player = player
 	world.add_child(waves)
-	var layer := CanvasLayer.new()
-	add_child(layer)
+	menu_cam = Camera3D.new()
+	menu_cam.fov = 60.0
+	menu_cam.far = 450.0
+	menu_cam.process_mode = Node.PROCESS_MODE_ALWAYS
+	world.add_child(menu_cam)
+	var hud_layer := CanvasLayer.new()
+	add_child(hud_layer)
 	hud = HudScript.new()
 	hud.player = player
 	hud.waves = waves
 	hud.main = self
-	layer.add_child(hud)
+	hud_layer.add_child(hud)
+	var ui_layer := CanvasLayer.new()
+	ui_layer.layer = 5
+	add_child(ui_layer)
+	ui = UiScript.new()
+	ui.main = self
+	ui.settings = settings
+	ui_layer.add_child(ui)
 	waves.wave_started.connect(func(n): hud.show_banner("WAVE %d" % n, "%d hostiles inbound" % waves.remaining(), 3.0))
 	waves.wave_cleared.connect(func(n): hud.show_banner("WAVE %d CLEARED" % n, "Resupply at the bunker cache", 3.5))
 	waves.announce.connect(func(t): hud.show_banner("WARNING", t, 4.0))
-	if autotest:
+	settings.changed.connect(apply_settings)
+	apply_settings("*")
+	if autotest or SettingsScript.quick_start:
+		SettingsScript.quick_start = false
 		start_game()
 	else:
-		state = "title"
-		get_tree().paused = true
+		go_home_screen()
 
 
 func _setup_input() -> void:
@@ -91,6 +133,7 @@ func _setup_input() -> void:
 	_bind("weapon_2", [KEY_2])
 	_bind("grenade", [KEY_G])
 	_bind("melee", [KEY_F, KEY_V])
+	_bind("flashlight", [KEY_T])
 	_bind("fire", [], [MOUSE_BUTTON_LEFT])
 	_bind("aim", [KEY_E], [MOUSE_BUTTON_RIGHT])
 
@@ -108,50 +151,68 @@ func _bind(action: String, keys: Array, buttons: Array = []) -> void:
 		InputMap.action_add_event(action, mb)
 
 
-func _setup_environment() -> void:
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	var sky := Sky.new()
-	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.28, 0.45, 0.62)
-	sm.sky_horizon_color = Color(0.78, 0.76, 0.62)
-	sm.ground_horizon_color = Color(0.5, 0.52, 0.4)
-	sm.ground_bottom_color = Color(0.12, 0.15, 0.08)
-	sm.sun_angle_max = 25.0
-	sky.sky_material = sm
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.05
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.55, 0.62, 0.48)
-	env.fog_density = 0.0055
-	env.fog_sky_affect = 0.35
-	env.glow_enabled = true
-	env.glow_intensity = 0.7
-	env.glow_bloom = 0.05
-	env.ssao_enabled = true
-	env.ssao_radius = 1.5
-	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.12
-	var we := WorldEnvironment.new()
-	we.environment = env
-	world.add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation = Vector3(deg_to_rad(-38), deg_to_rad(-35), 0)
-	sun.light_color = Color(1.0, 0.9, 0.72)
-	sun.light_energy = 1.25
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 90.0
-	world.add_child(sun)
+# ---------------------------------------------------------------- settings
+
+func apply_settings(key: String = "*") -> void:
+	var s := settings
+	atmosphere.apply_quality(s)
+	if key == "*" or key == "time_of_day":
+		var tod: String = s.get_v("time_of_day")
+		atmosphere.apply_time_of_day(tod)
+		if s.get_v("flashlight_auto"):
+			player.set_flashlight(tod == "night")
+	if key == "flashlight_auto" and s.get_v("flashlight_auto"):
+		player.set_flashlight(s.get_v("time_of_day") == "night")
+	arena.set_grass_density(s.get_v("grass_density"))
+	Shaders.set_wind(1.0 if s.get_v("wind") else 0.0)
+	Decals.enabled = s.get_v("decals")
+	# viewport / upscaling / anti-aliasing
+	var vp := get_viewport()
+	var up: int = s.get_v("upscaler")
+	vp.scaling_3d_mode = [Viewport.SCALING_3D_MODE_BILINEAR, Viewport.SCALING_3D_MODE_FSR, Viewport.SCALING_3D_MODE_FSR2][up]
+	vp.scaling_3d_scale = s.get_v("render_scale")
+	var aa: int = s.get_v("aa")
+	var fsr2 := up == 2
+	vp.msaa_3d = [Viewport.MSAA_DISABLED, Viewport.MSAA_DISABLED, Viewport.MSAA_2X, Viewport.MSAA_4X, Viewport.MSAA_DISABLED][aa] if not fsr2 else Viewport.MSAA_DISABLED
+	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if aa == 1 and not fsr2 else Viewport.SCREEN_SPACE_AA_DISABLED
+	vp.use_taa = aa == 4 and not fsr2
+	vp.positional_shadow_atlas_size = 4096 if int(s.get_v("shadows")) >= 3 else 2048
+	# display
+	if not autotest:
+		var want_fs: bool = s.get_v("fullscreen")
+		var is_fs := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+		if want_fs != is_fs:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if want_fs else DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if s.get_v("vsync") else DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = int(s.get_v("max_fps"))
+	# gameplay
+	player.base_fov = s.get_v("fov")
+	player.mouse_sens = s.get_v("sensitivity")
+	player.invert_y = s.get_v("invert_y")
+	# audio
+	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(float(s.get_v("master_volume")), 0.0001)))
 
 
 # ---------------------------------------------------------------- states
 
+func go_home_screen() -> void:
+	state = "home"
+	get_tree().paused = true
+	menu_cam.current = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	ui.show_screen("home")
+
+
+func set_menu_state(s: String) -> void:
+	state = s
+
+
 func start_game() -> void:
 	state = "playing"
+	game_started = true
+	player.camera.current = true
 	get_tree().paused = false
+	ui.show_screen("")
 	if not autotest:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -159,18 +220,27 @@ func start_game() -> void:
 func pause_game() -> void:
 	if state != "playing":
 		return
-	state = "paused"
+	state = "pause"
 	get_tree().paused = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	ui.show_screen("pause")
 
 
 func resume_game() -> void:
 	state = "playing"
 	get_tree().paused = false
+	ui.show_screen("")
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func restart() -> void:
+	SettingsScript.quick_start = true
+	get_tree().paused = false
+	get_tree().reload_current_scene()
+
+
+func go_home() -> void:
+	SettingsScript.quick_start = false
 	get_tree().paused = false
 	get_tree().reload_current_scene()
 
@@ -183,44 +253,46 @@ func _on_player_died() -> void:
 		best_wave = waves.wave
 		best_score = player.score
 		new_best = true
-	_save()
+	_save_stats()
 	if autotest:
 		print("AUTOTEST: player died at wave %d, kills %d, score %d, t=%.1f" % [waves.wave, player.kills, player.score, autotest_time])
+	else:
+		var t := get_tree().create_timer(1.2)
+		t.timeout.connect(_show_dead_screen)
+
+
+func _show_dead_screen() -> void:
+	if state == "dead":
+		ui.show_dead(waves.wave, player.kills, player.score, new_best)
 
 
 func _input(event: InputEvent) -> void:
 	if autotest:
 		return
+	var key := event as InputEventKey
+	var pressed_key := key != null and key.pressed and not key.echo
 	match state:
-		"title":
-			if (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed and event.physical_keycode in [KEY_ENTER, KEY_SPACE]):
-				start_game()
-				get_viewport().set_input_as_handled()
 		"playing":
-			if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
+			if pressed_key and key.physical_keycode == KEY_ESCAPE:
 				pause_game()
 				get_viewport().set_input_as_handled()
 			elif event is InputEventMouseButton and event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		"paused":
-			if event is InputEventMouseButton and event.pressed:
+		"pause":
+			if pressed_key and key.physical_keycode == KEY_ESCAPE:
 				resume_game()
 				get_viewport().set_input_as_handled()
-			elif event is InputEventKey and event.pressed:
-				match event.physical_keycode:
-					KEY_ESCAPE:
-						resume_game()
-					KEY_Q:
-						get_tree().quit()
+		"settings", "controls":
+			if pressed_key and key.physical_keycode == KEY_ESCAPE:
+				ui.go_back()
+				get_viewport().set_input_as_handled()
 		"dead":
-			if (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed and event.physical_keycode == KEY_R):
+			if pressed_key and key.physical_keycode == KEY_R:
 				restart()
-	if event is InputEventKey and event.pressed and event.physical_keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT]:
-		var f := 1.12 if event.physical_keycode == KEY_BRACKETRIGHT else 1.0 / 1.12
-		sensitivity = clampf(sensitivity * f, 0.0004, 0.012)
-		player.mouse_sens = sensitivity
-		player.notify("Mouse sensitivity: %.2f" % (sensitivity * 400.0))
-		_save()
+	if pressed_key and key.physical_keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and state == "playing":
+		var f := 1.12 if key.physical_keycode == KEY_BRACKETRIGHT else 1.0 / 1.12
+		settings.set_v("sensitivity", clampf(float(settings.get_v("sensitivity")) * f, 0.0005, 0.008))
+		player.notify("Mouse sensitivity: %.2f" % (float(settings.get_v("sensitivity")) * 400.0))
 
 
 func _notification(what: int) -> void:
@@ -228,33 +300,12 @@ func _notification(what: int) -> void:
 		pause_game()
 
 
-var _shot_i := 0
-
-
-func _take_shots() -> void:
-	var dir := ""
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--shots="):
-			dir = a.get_slice("=", 1)
-	if dir == "":
-		return
-	var times := [6.0, 14.0, 24.0, 34.0, 44.0]
-	if _shot_i < times.size() and autotest_time >= times[_shot_i]:
-		var img := get_viewport().get_texture().get_image()
-		img.save_png("%s/shot_%d.png" % [dir, _shot_i])
-		print("saved shot %d" % _shot_i)
-		_shot_i += 1
-		if _shot_i == 4:
-			var cam := Camera3D.new()
-			cam.fov = 60
-			world.add_child(cam)
-			cam.global_position = Vector3(38, 34, 52)
-			cam.look_at(Vector3(0, 0, -2), Vector3.UP)
-			cam.current = true
-			hud.visible = false
-
-
 func _process(delta: float) -> void:
+	if not game_started and menu_cam.current:
+		_orbit_t += delta * 0.04
+		var p := Vector3(sin(_orbit_t) * 46.0, 20.0 + sin(_orbit_t * 0.7) * 3.0, cos(_orbit_t) * 46.0)
+		menu_cam.global_position = p
+		menu_cam.look_at(Vector3(0, 2.5, -2), Vector3.UP)
 	if not autotest:
 		return
 	autotest_time += delta
@@ -263,24 +314,46 @@ func _process(delta: float) -> void:
 		print("AUTOTEST t=%.1f wave=%d alive_enemies=%d remaining=%d kills=%d hp=%.0f sh=%.0f fps=%d" % [
 			autotest_time, waves.wave, get_tree().get_nodes_in_group("enemy").size(), waves.remaining(),
 			player.kills, player.health, player.shield, Engine.get_frames_per_second()])
+		if OS.get_cmdline_user_args().has("--debug") and waves.remaining() <= 2:
+			for e in get_tree().get_nodes_in_group("enemy"):
+				print("   %s pos=%s vel=%s state=%s los=%s navfin=%s goal=%s next=%s floor=%s" % [e.type, e.global_position.snapped(Vector3.ONE * 0.1), e.velocity.snapped(Vector3.ONE * 0.1), e.state, e.los, e.agent.is_navigation_finished(), e.goal.snapped(Vector3.ONE * 0.1), e.agent.get_next_path_position().snapped(Vector3.ONE * 0.1), e.is_on_floor()])
+			print("   player=%s" % player.global_position.snapped(Vector3.ONE * 0.1))
 	if autotest_time >= autotest_limit or (state == "dead" and autotest_time > 3.0 and not player.godmode):
 		print("AUTOTEST DONE: wave=%d kills=%d score=%d alive=%s nodes=%d" % [waves.wave, player.kills, player.score, player.alive, get_tree().get_node_count()])
 		get_tree().quit()
 
 
-# ---------------------------------------------------------------- save
+## Screenshot helper for automated visual checks: --shots=<dir>
+func _take_shots() -> void:
+	if _shot_dir == "":
+		return
+	var times := [3.0, 6.0, 9.0, 11.0, 13.0]
+	if _shot_i < times.size() and autotest_time >= times[_shot_i]:
+		var img := get_viewport().get_texture().get_image()
+		img.save_png("%s/shot_%d.png" % [_shot_dir, _shot_i])
+		print("saved shot %d" % _shot_i)
+		_shot_i += 1
+		if _shot_i == 3:
+			menu_cam.current = true
+			game_started = false
+			hud.visible = false
+			ui.show_screen("home")
+		elif _shot_i == 4:
+			ui.show_screen("settings")
 
-func _load() -> void:
+
+# ---------------------------------------------------------------- stats
+
+func _load_stats() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(SAVE_PATH) == OK:
+	if cf.load(STATS_PATH) == OK:
 		best_wave = cf.get_value("stats", "best_wave", 0)
 		best_score = cf.get_value("stats", "best_score", 0)
-		sensitivity = cf.get_value("settings", "sensitivity", sensitivity)
 
 
-func _save() -> void:
+func _save_stats() -> void:
 	var cf := ConfigFile.new()
+	cf.load(STATS_PATH)
 	cf.set_value("stats", "best_wave", best_wave)
 	cf.set_value("stats", "best_score", best_score)
-	cf.set_value("settings", "sensitivity", sensitivity)
-	cf.save(SAVE_PATH)
+	cf.save(STATS_PATH)

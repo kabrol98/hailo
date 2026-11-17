@@ -11,6 +11,7 @@ const Effects = preload("res://scripts/effects.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const ProjectileScript = preload("res://scripts/projectile.gd")
 const PickupScript = preload("res://scripts/pickup.gd")
+const Shaders = preload("res://scripts/shaders.gd")
 
 const GRAVITY := 16.0
 
@@ -43,7 +44,8 @@ var collider: CollisionShape3D
 var visual: Node3D
 var legs: Array = []
 var arms: Array = []
-var skin_mat: StandardMaterial3D
+var skin_mat: ShaderMaterial
+var dark_mat: ShaderMaterial
 var glow_mat: StandardMaterial3D
 var shell: MeshInstance3D
 var shell_mat: StandardMaterial3D
@@ -205,21 +207,16 @@ func _pivot(parent: Node3D, pos: Vector3) -> Node3D:
 func _build_visual() -> void:
 	visual = Node3D.new()
 	add_child(visual)
-	skin_mat = StandardMaterial3D.new()
-	skin_mat.roughness = 0.55
-	skin_mat.metallic = 0.25
-	skin_mat.emission_enabled = true
-	skin_mat.emission = Color(1, 1, 1)
-	skin_mat.emission_energy_multiplier = 0.0
+	skin_mat = Shaders.enemy_skin(Color(0.2, 0.2, 0.2), Color(1, 0.2, 0.8), 1.0)
 	glow_mat = StandardMaterial3D.new()
 	glow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var dark := StandardMaterial3D.new()
-	dark.roughness = 0.8
+	dark_mat = Shaders.enemy_skin(Color(0.08, 0.08, 0.08), Color(1, 0.2, 0.8), 0.35)
+	var dark := dark_mat
 	var glow_col := Color(1, 0.2, 0.8)
 	match type:
 		"stalker":
-			skin_mat.albedo_color = Color(0.45, 0.22, 0.1)
-			dark.albedo_color = Color(0.15, 0.08, 0.05)
+			skin_mat.set_shader_parameter("albedo", Color(0.45, 0.22, 0.1))
+			dark.set_shader_parameter("albedo", Color(0.15, 0.08, 0.05))
 			glow_col = Color(1.0, 0.75, 0.1)
 			glow_mat.albedo_color = glow_col * 3.0
 			# low hunched quadruped
@@ -236,8 +233,8 @@ func _build_visual() -> void:
 				_part(hip, M_BOX, dark, Vector3(0, -0.35, 0), Vector3(0.12, 0.75, 0.12))
 				legs.append(hip)
 		"trooper":
-			skin_mat.albedo_color = Color(0.12, 0.2, 0.2)
-			dark.albedo_color = Color(0.06, 0.08, 0.08)
+			skin_mat.set_shader_parameter("albedo", Color(0.12, 0.2, 0.2))
+			dark.set_shader_parameter("albedo", Color(0.06, 0.08, 0.08))
 			glow_col = Color(1.0, 0.2, 0.75)
 			glow_mat.albedo_color = glow_col * 3.0
 			var torso := _part(visual, M_CAP, skin_mat, Vector3(0, 1.15, 0.05), Vector3(0.62, 0.38, 0.5), Vector3(-0.25, 0, 0))
@@ -259,8 +256,8 @@ func _build_visual() -> void:
 			_part(visual, M_CAP, skin_mat, Vector3(0.38, 1.05, -0.35), Vector3(0.18, 0.25, 0.18), Vector3(PI / 2, 0, 0))
 			_part(visual, M_SPH, glow_mat, Vector3(0.38, 1.05, -0.62), Vector3.ONE * 0.1)
 		"bulwark":
-			skin_mat.albedo_color = Color(0.22, 0.25, 0.12)
-			dark.albedo_color = Color(0.1, 0.1, 0.06)
+			skin_mat.set_shader_parameter("albedo", Color(0.22, 0.25, 0.12))
+			dark.set_shader_parameter("albedo", Color(0.1, 0.1, 0.06))
 			glow_col = Color(0.4, 1.0, 0.3)
 			glow_mat.albedo_color = glow_col * 3.0
 			_part(visual, M_CAP, skin_mat, Vector3(0, 1.7, 0), Vector3(1.5, 0.75, 1.1))
@@ -283,8 +280,8 @@ func _build_visual() -> void:
 				_part(sh, M_SPH, skin_mat, Vector3(0, -1.25, 0), Vector3.ONE * 0.5)
 				arms.append(sh)
 		"lancer":
-			skin_mat.albedo_color = Color(0.18, 0.14, 0.2)
-			dark.albedo_color = Color(0.07, 0.05, 0.08)
+			skin_mat.set_shader_parameter("albedo", Color(0.18, 0.14, 0.2))
+			dark.set_shader_parameter("albedo", Color(0.07, 0.05, 0.08))
 			glow_col = Color(1.0, 0.15, 0.1)
 			glow_mat.albedo_color = glow_col * 3.0
 			_part(visual, M_CAP, skin_mat, Vector3(0, 1.3, 0), Vector3(0.42, 0.42, 0.35))
@@ -314,6 +311,8 @@ func _build_visual() -> void:
 			beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			beam_root.add_child(beam)
 			beam_root.visible = false
+	skin_mat.set_shader_parameter("glow", glow_col)
+	dark_mat.set_shader_parameter("glow", glow_col)
 	var l := OmniLight3D.new()
 	l.light_color = glow_col
 	l.light_energy = 0.6
@@ -537,7 +536,7 @@ func _timers(delta: float) -> void:
 		shield = minf(max_shield, shield + shield_rate * delta)
 	if flash_t > 0.0:
 		flash_t -= delta
-	skin_mat.emission_energy_multiplier = 2.0 if flash_t > 0.0 else 0.0
+	skin_mat.set_shader_parameter("flash", 1.0 if flash_t > 0.0 else 0.0)
 	if shell_mat:
 		shell_t = maxf(shell_t - delta, 0.0)
 		shell_mat.albedo_color.a = clampf(shell_t * 2.0, 0.0, 0.7)

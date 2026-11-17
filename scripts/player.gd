@@ -8,6 +8,7 @@ const Effects = preload("res://scripts/effects.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const ProjectileScript = preload("res://scripts/projectile.gd")
 const GrenadeScript = preload("res://scripts/grenade.gd")
+const Decals = preload("res://scripts/decals.gd")
 
 const WALK_SPEED := 6.2
 const SPRINT_SPEED := 9.6
@@ -32,6 +33,12 @@ var alive := true
 var godmode := false
 
 var mouse_sens := 0.0025
+var base_fov := BASE_FOV
+var invert_y := false
+var flashlight: SpotLight3D
+var flash_mesh: MeshInstance3D
+var flash_t := 0.0
+var in_flashlight := false
 var head: Node3D
 var camera: Camera3D
 var viewmodel: Node3D
@@ -122,6 +129,16 @@ func _ready() -> void:
 	muzzle_light.light_color = Color(1.0, 0.75, 0.4)
 	camera.add_child(muzzle_light)
 	muzzle_light.position = Vector3(0.2, -0.1, -0.9)
+	flashlight = SpotLight3D.new()
+	flashlight.light_color = Color(1.0, 0.95, 0.85)
+	flashlight.light_energy = 3.0
+	flashlight.spot_range = 32.0
+	flashlight.spot_angle = 24.0
+	flashlight.spot_angle_attenuation = 1.6
+	flashlight.light_volumetric_fog_energy = 0.6
+	flashlight.position = Vector3(0.25, -0.15, -0.2)
+	flashlight.visible = false
+	camera.add_child(flashlight)
 	weapons = [
 		{"name": "VK-9 CARBINE", "kind": "ballistic", "auto": true, "rate": 0.095, "damage": 13.0,
 			"mag": 32, "ammo": 32, "reserve": 192, "max_reserve": 320, "reload": 1.8,
@@ -131,6 +148,7 @@ func _ready() -> void:
 			"spread": 0.014, "aim_spread": 0.005, "recoil": 0.007, "zoom": 60.0},
 	]
 	_build_weapon_models()
+	_build_muzzle_flash()
 	_select_weapon(0, true)
 
 
@@ -215,6 +233,30 @@ func _build_weapon_models() -> void:
 	muzzles = [m0, m1]
 
 
+func _build_muzzle_flash() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in 3:
+		var a := PI * k / 3.0
+		var r := Vector3(cos(a), sin(a), 0) * 0.07
+		for v in [Vector3.ZERO, r, Vector3(0, 0, -0.22), Vector3.ZERO, -r, Vector3(0, 0, -0.22)]:
+			st.add_vertex(v)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_color = Color(4.0, 2.6, 1.2)
+	flash_mesh = MeshInstance3D.new()
+	flash_mesh.mesh = st.commit()
+	flash_mesh.material_override = m
+	flash_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	flash_mesh.visible = false
+	(muzzles[0] as Node3D).add_child(flash_mesh)
+
+
+func set_flashlight(on: bool) -> void:
+	flashlight.visible = on
+
+
 func _select_weapon(i: int, instant := false) -> void:
 	if i == current and not instant:
 		return
@@ -236,7 +278,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var m := event as InputEventMouseMotion
 		var sens := mouse_sens * (0.55 if aiming else 1.0)
 		rotate_y(-m.relative.x * sens)
-		head.rotation.x = clampf(head.rotation.x - m.relative.y * sens, deg_to_rad(-88), deg_to_rad(88))
+		head.rotation.x = clampf(head.rotation.x - m.relative.y * sens * (-1.0 if invert_y else 1.0), deg_to_rad(-88), deg_to_rad(88))
 		sway += Vector2(m.relative.x, m.relative.y) * 0.0004
 	elif event is InputEventMouseButton and event.pressed:
 		var mb := event as InputEventMouseButton
@@ -262,12 +304,16 @@ func _read_input() -> void:
 		in_select = 1
 	in_grenade = Input.is_action_just_pressed("grenade")
 	in_melee = Input.is_action_just_pressed("melee")
+	in_flashlight = Input.is_action_just_pressed("flashlight")
 
 
 # ---------------------------------------------------------------- main loop
 
 func _physics_process(delta: float) -> void:
 	_update_feedback(delta)
+	if flash_t > 0.0:
+		flash_t -= delta
+		flash_mesh.visible = flash_t > 0.0
 	if not alive:
 		velocity.x = 0.0
 		velocity.z = 0.0
@@ -278,6 +324,10 @@ func _physics_process(delta: float) -> void:
 		_bot(delta)
 	else:
 		_read_input()
+	if in_flashlight:
+		set_flashlight(not flashlight.visible)
+		Sfx.play_ui(self, "empty", -8.0, 1.5)
+		in_flashlight = false
 	crouching = in_crouch or (crouching and test_move(global_transform, Vector3.UP * 0.7))
 	sprinting = in_sprint and in_move.y < -0.3 and not crouching and not in_aim and not in_fire and reloading <= 0.0
 	var spd := WALK_SPEED
@@ -376,7 +426,7 @@ func _update_weapons(delta: float) -> void:
 	if switching > 0.0:
 		switching -= delta
 	aiming = in_aim and switching <= 0.0 and reloading <= 0.0
-	var target_fov: float = w.zoom if aiming else BASE_FOV
+	var target_fov: float = w.zoom * base_fov / BASE_FOV if aiming else base_fov
 	camera.fov = lerpf(camera.fov, target_fov, 14.0 * delta)
 	if in_select >= 0:
 		_select_weapon(in_select)
@@ -439,6 +489,8 @@ func _fire_carbine(w: Dictionary) -> void:
 		var c: Object = hit.collider
 		if c != null and c.has_method("take_damage"):
 			register_hit(c.take_damage(w.damage, "ballistic", global_position, end))
+		if not (c is Node and (c as Node).is_in_group("enemy")):
+			Decals.bullet_hole(self, end, hit.normal)
 		Effects.impact(self, end, hit.normal, Color(1.0, 0.7, 0.3))
 	var mz: Vector3 = (muzzles[0] as Node3D).global_position
 	if randf() < 0.6:
@@ -446,6 +498,9 @@ func _fire_carbine(w: Dictionary) -> void:
 	_kick(w.recoil)
 	muzzle_light.light_color = Color(1.0, 0.75, 0.4)
 	muzzle_light.light_energy = 3.0
+	flash_t = 0.04
+	flash_mesh.visible = true
+	flash_mesh.rotation.z = randf() * TAU
 	Sfx.play_ui(self, "rifle", -5.0)
 	if w.ammo == 0 and w.reserve > 0:
 		_start_reload()
