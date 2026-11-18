@@ -274,8 +274,77 @@ void fragment() {
 }
 """
 
+## Material for the asset-pack robots: the model's own textures plus glowing
+## Thorn veins crawling over the metal, a rim glow, and the white hit flash.
+const THORN_ROBOT := """
+shader_type spatial;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform vec3 albedo_mul : source_color = vec3(1.0);
+uniform bool use_normal = false;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform bool use_orm = false;
+uniform sampler2D orm_tex : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform float roughness = 0.75;
+uniform float metallic = 0.15;
+uniform vec3 glow : source_color = vec3(1.0, 0.2, 0.8);
+uniform float glow_amount = 1.0;
+uniform float flash = 0.0;
+uniform float pulse_speed = 2.2;
+uniform float unit_scale = 1.0;
+uniform float coverage = 0.5;
+varying vec3 lp;
+void vertex() {
+	lp = VERTEX * unit_scale;
+}
+void fragment() {
+	vec4 c = texture(albedo_tex, UV);
+	ALBEDO = c.rgb * albedo_mul;
+	if (use_orm) {
+		vec3 orm = texture(orm_tex, UV).rgb;
+		AO = orm.r;
+		ROUGHNESS = orm.g;
+		METALLIC = orm.b;
+	} else {
+		ROUGHNESS = roughness;
+		METALLIC = metallic;
+	}
+	if (use_normal) {
+		NORMAL_MAP = texture(normal_tex, UV).rgb;
+	}
+	vec3 p = lp * 3.2;
+	float v = abs(sin(p.x * 2.1 + 1.6 * sin(p.y * 1.7)) * cos(p.z * 2.3 + 1.4 * sin(p.y * 1.3 + p.x)));
+	float vein = 1.0 - smoothstep(0.0, 0.07, v);
+	float n = sin(lp.x * 4.7 + lp.z * 3.1) * sin(lp.y * 3.9 - lp.x * 2.3);
+	vein *= step(1.0 - coverage, 0.5 + 0.5 * n);
+	float pulse = 0.55 + 0.45 * sin(TIME * pulse_speed - lp.y * 5.0);
+	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
+	EMISSION = glow * (vein * pulse * 2.2 + fres * 0.25) * glow_amount + vec3(flash * 1.8);
+}
+"""
+
 
 # ============================================================== materials
+
+static func thorn_robot(base: BaseMaterial3D, glow: Color, unit_scale: float, coverage := 0.5) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = _shader("thorn_robot", THORN_ROBOT)
+	m.set_shader_parameter("albedo_tex", base.albedo_texture)
+	m.set_shader_parameter("albedo_mul", base.albedo_color)
+	if base.normal_enabled and base.normal_texture:
+		m.set_shader_parameter("use_normal", true)
+		m.set_shader_parameter("normal_tex", base.normal_texture)
+	if base.roughness_texture:
+		m.set_shader_parameter("use_orm", true)
+		m.set_shader_parameter("orm_tex", base.roughness_texture)
+	else:
+		m.set_shader_parameter("roughness", base.roughness)
+		m.set_shader_parameter("metallic", base.metallic)
+	m.set_shader_parameter("glow", glow)
+	m.set_shader_parameter("unit_scale", unit_scale)
+	m.set_shader_parameter("coverage", coverage)
+	m.set_shader_parameter("pulse_speed", randf_range(1.8, 2.8))
+	return m
+
 
 static func sky_material() -> ShaderMaterial:
 	var m := ShaderMaterial.new()

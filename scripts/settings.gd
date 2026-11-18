@@ -14,6 +14,7 @@ const DEFAULTS := {
 	"preset": "high",
 	"time_of_day": "day",
 	"vegetation": "kit",
+	"models": "kit",
 	# graphics
 	"shadows": 3,
 	"ssao": true,
@@ -99,6 +100,9 @@ const OPTIONS := [
 	{"tab": "World", "key": "vegetation", "label": "Vegetation style", "type": "choice",
 		"choices": [["Stylized asset pack", "kit"], ["Procedural", "procedural"]],
 		"hint": "Stylized uses the Quaternius nature pack if it has been downloaded (tools/fetch_assets.py). Changing this rebuilds the level."},
+	{"tab": "World", "key": "models", "label": "Enemy & weapon models", "type": "choice",
+		"choices": [["Animated asset pack", "kit"], ["Procedural", "procedural"]],
+		"hint": "Animated robots, textured guns and pickups from the Quaternius sci-fi packs, overgrown by the Thorn. Changing this rebuilds the level."},
 	{"tab": "Gameplay", "key": "fov", "label": "Field of view", "type": "slider",
 		"min": 65.0, "max": 100.0, "step": 1.0, "fmt": "%d°", "fmt_mul": 1.0},
 	{"tab": "Gameplay", "key": "sensitivity", "label": "Mouse sensitivity", "type": "slider",

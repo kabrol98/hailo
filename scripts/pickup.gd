@@ -3,6 +3,9 @@ extends Area3D
 
 const Effects = preload("res://scripts/effects.gd")
 const Sfx = preload("res://scripts/sfx.gd")
+const ModelKit = preload("res://scripts/model_kit.gd")
+
+const PROPS := {"ammo": ["Prop_Ammo_Small", 0.42], "grenade": ["Prop_Grenade", 0.4], "health": ["Prop_HealthPack", 0.55]}
 
 var kind := "ammo"
 var persistent := false
@@ -60,6 +63,14 @@ func _ready() -> void:
 		l.omni_range = 4.0
 		l.position.y = 0.8
 		add_child(l)
+	elif ModelKit.enabled and PROPS.has(kind):
+		var pr: Array = PROPS[kind]
+		_vis.add_child(ModelKit.prop(pr[0], pr[1]))
+		var l := OmniLight3D.new()
+		l.light_color = col
+		l.light_energy = 0.8
+		l.omni_range = 1.8
+		_vis.add_child(l)
 	else:
 		var body := MeshInstance3D.new()
 		var bm := BoxMesh.new()

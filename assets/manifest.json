@@ -12,7 +12,47 @@
       "sha256": "298f6732b872e4cf7b30e6e7abf9641c7f6dc6b326df37ac089533ed7e3d58c9",
       "size_bytes": 104088529,
       "dest": "assets/third_party/stylized_nature",
-      "extract": ["glTF/*", "License_Standard.txt"]
+      "extract": [
+        "glTF/*",
+        "License_Standard.txt"
+      ],
+      "used_for": "Trees, plants, grass, rocks"
+    },
+    {
+      "id": "scifi_essentials_kit",
+      "title": "Sci-Fi Essentials Kit (models)",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/sci-fi-essentials-kit",
+      "homepage": "https://quaternius.com/packs/scifiessentialskit.html",
+      "url": "https://opengameart.org/sites/default/files/sci-fi_essentials_kit_models.zip",
+      "sha256": "f5cb9382a029730f9fa8f93e7fdb103c1aaaec094a22b1397833ce0e48bd1016",
+      "size_bytes": 87836656,
+      "dest": "assets/third_party/scifi_essentials",
+      "extract": [
+        "glTF/*",
+        "License_Standard.txt"
+      ],
+      "used_for": "Stalker (QuadShell), Lancer (EyeDrone), weapon viewmodels, pickups"
+    },
+    {
+      "id": "animated_mech_pack",
+      "title": "Animated Mech Pack (March 2021)",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/animated-mech-pack",
+      "homepage": "https://quaternius.com/packs/animatedmech.html",
+      "url": "https://opengameart.org/sites/default/files/animated_mech_pack_-_march_2021.zip",
+      "sha256": "14102eade586a04191fc96a4bf52bc511b91d3e90d76a87e8e621095b8d0ea26",
+      "size_bytes": 26379703,
+      "dest": "assets/third_party/mechs",
+      "strip": "Animated Mech Pack - March 2021/",
+      "extract": [
+        "FBX/*",
+        "Textures/*",
+        "License.txt"
+      ],
+      "used_for": "Trooper (George / Leela / Mike variants), Bulwark (Stan)"
     }
   ]
 }

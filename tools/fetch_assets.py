@@ -49,13 +49,17 @@ def download(url, path, expected_size=None):
     os.replace(tmp, path)
 
 
-def safe_extract(zf, members, dest):
+def safe_extract(zf, members, dest, strip=""):
+    """Extract members into dest, removing an optional leading `strip` folder."""
     dest_abs = os.path.abspath(dest)
     for m in members:
-        target = os.path.abspath(os.path.join(dest, m))
+        rel = m[len(strip):] if strip and m.startswith(strip) else m
+        target = os.path.abspath(os.path.join(dest, rel))
         if not target.startswith(dest_abs + os.sep):
             raise RuntimeError("refusing to extract outside destination: " + m)
-        zf.extract(m, dest)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with zf.open(m) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out)
 
 
 def fetch(pack, force=False):
@@ -80,8 +84,9 @@ def fetch(pack, force=False):
     os.makedirs(dest)
     with zipfile.ZipFile(zpath) as zf:
         names = [n for n in zf.namelist() if not n.endswith("/")]
-        members = [n for n in names if any(fnmatch.fnmatch(n, pat) for pat in pack["extract"])]
-        safe_extract(zf, members, dest)
+        strip = pack.get("strip", "")
+        members = [n for n in names if any(fnmatch.fnmatch(n, strip + pat) for pat in pack["extract"])]
+        safe_extract(zf, members, dest, strip)
     with open(stamp, "w") as f:
         f.write(pack["sha256"])
     print("[done] %s -> %s (%d files)" % (pack["id"], pack["dest"], len(members)))

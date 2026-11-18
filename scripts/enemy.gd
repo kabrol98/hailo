@@ -12,6 +12,7 @@ const Sfx = preload("res://scripts/sfx.gd")
 const ProjectileScript = preload("res://scripts/projectile.gd")
 const PickupScript = preload("res://scripts/pickup.gd")
 const Shaders = preload("res://scripts/shaders.gd")
+const ModelKit = preload("res://scripts/model_kit.gd")
 
 const GRAVITY := 16.0
 
@@ -77,6 +78,12 @@ var knock := Vector3.ZERO
 var vocal_cd := 0.0
 var stuck_t := 0.0
 var _last_pos := Vector3.ZERO
+# asset-pack model (ModelKit); empty when using the procedural body
+var model := {}
+var anim: AnimationPlayer
+var anim_lock := 0.0
+var _cur_anim := ""
+var _hover := 0.0
 
 
 static func _ensure_meshes() -> void:
@@ -313,6 +320,8 @@ func _build_visual() -> void:
 			beam_root.visible = false
 	skin_mat.set_shader_parameter("glow", glow_col)
 	dark_mat.set_shader_parameter("glow", glow_col)
+	if ModelKit.enabled:
+		_use_kit_model(glow_col)
 	var l := OmniLight3D.new()
 	l.light_color = glow_col
 	l.light_energy = 0.6
@@ -332,6 +341,43 @@ func _build_visual() -> void:
 		shell.material_override = shell_mat
 		shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(shell)
+
+
+func _use_kit_model(glow_col: Color) -> void:
+	for c in visual.get_children():
+		c.free()
+	legs.clear()
+	arms.clear()
+	model = ModelKit.enemy(type, glow_col)
+	anim = model.anim
+	_hover = model.hover
+	visual.add_child(model.root)
+	model.root.position.y = _hover
+	if type == "lancer":
+		# the drone's eye is the emitter
+		head_y = _hover + 0.55
+		beam_root.position = Vector3(0, _hover + 0.5, -0.5)
+
+
+## Plays a one-shot animation (shoot, melee, hit...) and holds it for `hold` seconds.
+func _anim_action(key: String, hold := 0.35, speed := 1.0) -> void:
+	if anim == null or not model.anims.has(key):
+		return
+	var n: String = model.anims[key]
+	anim.play(n, 0.08, speed)
+	anim.seek(0.0, true)
+	_cur_anim = n
+	anim_lock = hold
+
+
+func _anim_loop(key: String, speed := 1.0, blend := 0.2) -> void:
+	if anim == null:
+		return
+	var n: String = model.anims.get(key, model.anims.idle)
+	anim.speed_scale = speed
+	if n != _cur_anim:
+		anim.play(n, blend)
+		_cur_anim = n
 
 
 # ---------------------------------------------------------------- damage
@@ -371,6 +417,8 @@ func take_damage(amount: float, kind: String, from: Vector3, hit_pos = null) -> 
 	if leftover > 0.0:
 		health -= leftover * mh
 		flash_t = 0.1
+		if anim_lock <= 0.0 and health > 0.0 and randf() < 0.5:
+			_anim_action("hit", 0.2)
 	# react: being shot pulls attention / makes troopers dodge
 	if state == "fight" and randf() < 0.3:
 		strafe_dir = -strafe_dir
@@ -409,9 +457,23 @@ func _die(_from: Vector3) -> void:
 	died.emit(self)
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(visual, "rotation:x", -PI / 2 * 0.9, 0.5).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
-	tw.tween_property(visual, "position:y", -0.2, 0.5)
-	tw.chain().tween_interval(1.2)
+	if not model.is_empty() and model.anims.has("death"):
+		anim.speed_scale = 1.0
+		anim.play(model.anims.death, 0.1)
+		_cur_anim = model.anims.death
+		(model.overlay as ShaderMaterial).set_shader_parameter("glow_amount", 0.25)
+		tw.tween_interval(1.9)
+	elif not model.is_empty():
+		# drone: drops out of the air and rolls
+		anim.pause()
+		(model.overlay as ShaderMaterial).set_shader_parameter("glow_amount", 0.15)
+		tw.tween_property(model.root, "position:y", 0.45, 0.45).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(model.root, "rotation", Vector3(1.1, 0.0, 0.7), 0.45)
+		tw.chain().tween_interval(1.2)
+	else:
+		tw.tween_property(visual, "rotation:x", -PI / 2 * 0.9, 0.5).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(visual, "position:y", -0.2, 0.5)
+		tw.chain().tween_interval(1.2)
 	tw.chain().tween_property(visual, "position:y", -2.5, 1.0)
 	tw.chain().tween_callback(queue_free)
 	if shell:
@@ -537,6 +599,9 @@ func _timers(delta: float) -> void:
 	if flash_t > 0.0:
 		flash_t -= delta
 	skin_mat.set_shader_parameter("flash", 1.0 if flash_t > 0.0 else 0.0)
+	if not model.is_empty():
+		(model.overlay as ShaderMaterial).set_shader_parameter("flash", 1.0 if flash_t > 0.0 else 0.0)
+		anim_lock = maxf(anim_lock - delta, 0.0)
 	if shell_mat:
 		shell_t = maxf(shell_t - delta, 0.0)
 		shell_mat.albedo_color.a = clampf(shell_t * 2.0, 0.0, 0.7)
@@ -610,6 +675,7 @@ func _combat(delta: float, dist: float) -> void:
 		"stalker":
 			if dist < 1.8 and melee_cd <= 0.0:
 				melee_cd = 1.0
+				_anim_action("melee", 0.35)
 				player.take_damage(18.0 * dmg_mult, "melee", global_position, null)
 				Sfx.play_at(self, "melee", global_position, 0.0)
 			elif los and dist > 3.0 and dist < 9.0 and leap_cd <= 0.0 and is_on_floor():
@@ -620,6 +686,7 @@ func _combat(delta: float, dist: float) -> void:
 				velocity = Vector3(lv.x, 5.0, lv.z)
 				leaping = true
 				leap_t = 0.25
+				_anim_action("leap", 0.5)
 				Sfx.play_at(self, "screech", global_position, 2.0, 1.4)
 		"trooper":
 			if burst_left > 0:
@@ -638,6 +705,7 @@ func _combat(delta: float, dist: float) -> void:
 		"bulwark":
 			if dist < 3.4 and melee_cd <= 0.0:
 				melee_cd = 2.0
+				_anim_action("melee", 0.55)
 				Effects.burst(self, global_position, Vector3.UP, Color(0.5, 0.4, 0.3), 20, 6.0, 0.6, 0.12, 12.0, 80.0, 0.5)
 				Effects.flash(self, global_position + Vector3.UP, Color(0.4, 1.0, 0.3), 4.0, 6.0, 0.3)
 				Sfx.play_at(self, "melee", global_position, 6.0, 0.6)
@@ -667,12 +735,15 @@ func _combat(delta: float, dist: float) -> void:
 				if fire_cd <= 0.0:
 					fire_cd = randf_range(4.0, 5.5)
 					charge_t = 1.4
+					_anim_action("charge", 1.4)
 					beam_aim = player.global_position + Vector3.UP * 1.2
 					beam_root.visible = true
 					Sfx.play_at(self, "lancer_charge", global_position, 2.0)
 
 
 func _muzzle() -> Vector3:
+	if not model.is_empty():
+		return global_transform * Vector3(0.3, 1.3, -0.65)
 	return global_transform * Vector3(0.38, 1.05, -0.7)
 
 
@@ -697,6 +768,7 @@ func _shoot_bolt() -> void:
 	get_parent().add_child(p)
 	p.global_position = from
 	Sfx.play_at(self, "enemy_bolt", from, -2.0)
+	_anim_action("shoot", 0.3, 1.6)
 
 
 func _lob_mortar() -> void:
@@ -721,6 +793,7 @@ func _lob_mortar() -> void:
 	get_parent().add_child(p)
 	p.global_position = from
 	Sfx.play_at(self, "mortar", from, 3.0)
+	_anim_action("shoot", 0.5)
 
 
 func _update_beam(locked: bool) -> void:
@@ -751,9 +824,13 @@ func _fire_beam() -> void:
 	Effects.tracer(self, from, end, Color(1.0, 0.35, 0.2), 0.08)
 	Effects.flash(self, from, Color(1, 0.3, 0.2), 4.0, 6.0, 0.2)
 	Sfx.play_at(self, "lancer_fire", from, 4.0)
+	_anim_action("shoot", 0.4)
 
 
 func _animate(delta: float) -> void:
+	if not model.is_empty():
+		_animate_kit(delta)
+		return
 	var hv := Vector2(velocity.x, velocity.z).length()
 	var ratio := clampf(hv / maxf(speed, 0.1), 0.0, 1.5)
 	walk_t += delta * (4.0 + hv * 1.6)
@@ -769,3 +846,24 @@ func _animate(delta: float) -> void:
 		visual.rotation.x = 0.3
 	else:
 		visual.rotation.x = lerpf(visual.rotation.x, 0.0, 6.0 * delta)
+
+
+func _animate_kit(delta: float) -> void:
+	var hv := Vector2(velocity.x, velocity.z).length()
+	if _hover > 0.0:
+		walk_t += delta
+		model.root.position.y = _hover + sin(walk_t * 2.2) * 0.12
+		model.root.rotation.z = -velocity.dot(global_transform.basis.x) * 0.04
+	if leaping:
+		visual.rotation.x = 0.25
+	else:
+		visual.rotation.x = lerpf(visual.rotation.x, 0.0, 6.0 * delta)
+	if anim_lock > 0.0:
+		return
+	var run_speed: float = model.run_speed
+	if hv < 0.4:
+		_anim_loop("idle")
+	elif hv < run_speed:
+		_anim_loop("walk", clampf(hv / 2.4, 0.6, 1.8))
+	else:
+		_anim_loop("run", clampf(hv / 6.0, 0.7, 1.6))

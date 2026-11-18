@@ -9,6 +9,7 @@ const Sfx = preload("res://scripts/sfx.gd")
 const ProjectileScript = preload("res://scripts/projectile.gd")
 const GrenadeScript = preload("res://scripts/grenade.gd")
 const Decals = preload("res://scripts/decals.gd")
+const ModelKit = preload("res://scripts/model_kit.gd")
 
 const WALK_SPEED := 6.2
 const SPRINT_SPEED := 9.6
@@ -93,6 +94,8 @@ var in_melee := false
 var _wheel_switch := false
 
 var autobot := false
+## Intents are set from outside (gallery / showcase); no device input.
+var scripted := false
 var _bot_strafe := 1.0
 var _bot_strafe_t := 0.0
 
@@ -227,10 +230,32 @@ func _build_weapon_models() -> void:
 	var m1 := Node3D.new()
 	m1.position = Vector3(0, 0, -0.5)
 	a.add_child(m1)
+	if ModelKit.enabled:
+		_use_kit_guns(c, a, m0, m1)
 	viewmodel.add_child(c)
 	viewmodel.add_child(a)
 	weapon_models = [c, a]
 	muzzles = [m0, m1]
+
+
+## Swaps the procedural gun bodies for the textured asset-pack guns.
+func _use_kit_guns(c: Node3D, a: Node3D, m0: Node3D, m1: Node3D) -> void:
+	for n in [c, a]:
+		for ch in (n as Node3D).get_children():
+			if ch != m0 and ch != m1:
+				ch.free()
+	# sight line sits just under the camera when aiming (AIM_POS)
+	var rifle := ModelKit.gun("Gun_Rifle", 0.68)
+	rifle.position = Vector3(0, -0.115, -0.02)
+	c.add_child(rifle)
+	m0.position = rifle.position + ModelKit.gun_muzzle(rifle)
+	var caster := ModelKit.gun("Gun_Revolver", 0.42)
+	caster.position = Vector3(0, -0.09, -0.04)
+	a.add_child(caster)
+	m1.position = caster.position + ModelKit.gun_muzzle(caster)
+	# heat cells along the barrel: blue when cool, orange near overheat
+	for s in [-1.0, 1.0]:
+		_vm(a, _bm(Vector3(0.004, 0.012, 0.16)), heat_mat, Vector3(0.024 * s, -0.035, -0.2))
 
 
 func _build_muzzle_flash() -> void:
@@ -322,7 +347,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if autobot:
 		_bot(delta)
-	else:
+	elif not scripted:
 		_read_input()
 	if in_flashlight:
 		set_flashlight(not flashlight.visible)

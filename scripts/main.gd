@@ -2,9 +2,11 @@ extends Node3D
 ## Entry point: input map, world assembly, settings application and game states.
 ## States: home, settings, controls, playing, paused, dead
 
+const ModelKit = preload("res://scripts/model_kit.gd")
 const ArenaScript = preload("res://scripts/arena.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const WavesScript = preload("res://scripts/waves.gd")
+const EnemyScript = preload("res://scripts/enemy.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const UiScript = preload("res://scripts/ui.gd")
 const SettingsScript = preload("res://scripts/settings.gd")
@@ -60,6 +62,8 @@ func _ready() -> void:
 			settings.values["time_of_day"] = a.get_slice("=", 1)
 		elif a.begins_with("--veg="):
 			settings.values["vegetation"] = a.get_slice("=", 1)
+		elif a.begins_with("--models="):
+			settings.values["models"] = a.get_slice("=", 1)
 		elif a.begins_with("--preset="):
 			var pn := a.get_slice("=", 1)
 			settings.values["preset"] = pn
@@ -81,6 +85,7 @@ func _ready() -> void:
 	arena = ArenaScript.new()
 	arena.name = "Arena"
 	arena.vegetation_style = settings.get_v("vegetation")
+	ModelKit.enabled = settings.get_v("models") == "kit" and ModelKit.available()
 	world.add_child(arena)
 	arena.build()
 	print("Arena built in %d ms" % (Time.get_ticks_msec() - t0))
@@ -95,6 +100,10 @@ func _ready() -> void:
 	waves.name = "Waves"
 	waves.spawn_points = arena.spawn_points
 	waves.player = player
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--wave="):
+			# debug: start later in the escalation so every enemy type appears
+			waves.wave = maxi(int(a.get_slice("=", 1)) - 1, 0)
 	world.add_child(waves)
 	menu_cam = Camera3D.new()
 	menu_cam.fov = 60.0
@@ -168,7 +177,7 @@ func _bind(action: String, keys: Array, buttons: Array = []) -> void:
 
 func apply_settings(key: String = "*") -> void:
 	var s := settings
-	if key == "vegetation":
+	if key == "vegetation" or key == "models":
 		# the level is built once at load, so rebuild it
 		SettingsScript.quick_start = false
 		get_tree().paused = false
@@ -330,6 +339,7 @@ func _process(delta: float) -> void:
 	autotest_time += delta
 	_take_shots()
 	_run_showcase(delta)
+	_run_gallery()
 	if Engine.get_process_frames() % 300 == 0:
 		print("AUTOTEST t=%.1f wave=%d alive_enemies=%d remaining=%d kills=%d hp=%.0f sh=%.0f fps=%d" % [
 			autotest_time, waves.wave, get_tree().get_nodes_in_group("enemy").size(), waves.remaining(),
@@ -365,16 +375,67 @@ func _run_showcase(delta: float) -> void:
 		t -= float(c.dur)
 
 
+## Debug: --gallery lines up one of each enemy type in front of a frozen
+## player and steps through hip fire / aim on both weapons (pair with --shots).
+var _gallery_step := -1
+
+
+func _run_gallery() -> void:
+	if not OS.get_cmdline_user_args().has("--gallery"):
+		return
+	var live := OS.get_cmdline_user_args().has("--live")
+	if _gallery_step < 0:
+		_gallery_step = 0
+		waves.set_physics_process(false)
+		player.autobot = false
+		player.scripted = true
+		player.rotation.y += PI
+		var p: Vector3 = arena.player_spawn
+		var spots := [[-2.6, 5.5, "stalker"], [-0.6, 8.5, "trooper"], [1.6, 7.0, "trooper"], [-3.8, 12.0, "bulwark"], [3.8, 11.0, "lancer"], [0.8, 14.5, "trooper"]]
+		var fwd := -player.global_transform.basis.z
+		var right := player.global_transform.basis.x
+		for sp in spots:
+			var e := EnemyScript.new()
+			e.setup(sp[2], 4)
+			world.add_child(e)
+			var q: Vector3 = p + right * float(sp[0]) + fwd * float(sp[1])
+			q.y = arena.height_at(q.x, q.z) + 0.2
+			e.global_position = q
+			e.rotation.y = player.rotation.y
+			if live:
+				e.player = player
+		return
+	var t := autotest_time
+	if live:
+		# enemies close in on a frozen player for a few seconds, then the bot fights back
+		if t >= 7.0 and not player.autobot:
+			player.scripted = false
+			player.autobot = true
+		return
+	var steps := [[3.0, false, 0], [5.0, true, 0], [7.0, false, 1], [9.0, true, 1]]
+	for st in steps:
+		if t >= st[0]:
+			player.in_aim = st[1]
+			player.in_select = st[2]
+
+
 ## Screenshot helper for automated visual checks: --shots=<dir>
 func _take_shots() -> void:
 	if _shot_dir == "":
 		return
 	var times := [3.0, 6.0, 9.0, 11.0, 13.0]
+	var menus := true
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shot-times="):
+			times = Array(a.get_slice("=", 1).split(",")).map(func(x): return float(x))
+			menus = false
 	if _shot_i < times.size() and autotest_time >= times[_shot_i]:
 		var img := get_viewport().get_texture().get_image()
 		img.save_png("%s/shot_%d.png" % [_shot_dir, _shot_i])
 		print("saved shot %d" % _shot_i)
 		_shot_i += 1
+		if not menus:
+			return
 		if _shot_i == 3:
 			menu_cam.current = true
 			game_started = false

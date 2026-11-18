@@ -12,10 +12,10 @@ are all generated in code, so the project needs no external assets.
    If macOS blocks it the first time, right-click the app and choose **Open**.
 2. Launch Godot. In the Project Manager click **Import**, pick this folder's
    `project.godot`, then **Import & Edit**. The first import takes a few seconds.
-3. *(Optional, recommended)* Download the stylized asset pack. From this
-   folder in Terminal, run `python3 tools/fetch_assets.py` (~100 MB, about
-   20 s), then reopen the project so Godot imports it. Without it the game
-   uses its procedural vegetation.
+3. *(Optional, recommended)* Download the asset packs. From this folder in
+   Terminal, run `python3 tools/fetch_assets.py` (~220 MB total, under a
+   minute), then reopen the project so Godot imports them. Without them the
+   game uses its procedural vegetation, enemies and guns.
 4. Press **Play** (▶ at top right, or `Cmd+B`). The home screen opens. Pick **Settings** to adjust graphics or time of day, or **Deploy** to play.
 
 To get a standalone `.app`, use **Project → Export → Add… → macOS**. Godot will
@@ -44,10 +44,18 @@ Trackpad: two-finger click is aim. Tap-to-click works for firing if it's enabled
 
 ## Third-party assets (not committed)
 
-The vegetation uses the free **Stylized Nature MegaKit** by Quaternius
-(CC0, public domain): trees, ferns, big-leaf plants, bushes, grass clumps,
-flowers, mushrooms, rocks and pebbles. The trees and plants sway in the wind
-via the game's foliage shader. Palms and all buildings are still procedural.
+Three free packs by Quaternius, all CC0 (public domain):
+
+| Pack | Used for |
+|---|---|
+| Stylized Nature MegaKit | Trees, ferns, big-leaf plants, bushes, grass clumps, flowers, mushrooms, rocks, pebbles. They sway via the game's foliage shader. |
+| Sci-Fi Essentials Kit | Stalker (QuadShell spider bot), Lancer (EyeDrone, hovers), the VK-9 Carbine and Arc Caster viewmodels, ammo / grenade / health pickups |
+| Animated Mech Pack | Troopers (three mech variants, picked at random) and the Bulwark |
+
+All the robots use one shared "Thorn" material: the model's own textures plus
+glowing veins that pulse across the metal (colour per enemy type), a rim
+glow, and the hit flash. That's what makes the two robot packs look like one
+faction. Palms and all buildings are still procedural.
 
 Assets are **not stored in git**. Instead:
 
@@ -57,7 +65,8 @@ Assets are **not stored in git**. Instead:
   packs, verifies the checksum, and extracts them into
   `assets/third_party/` (git-ignored).
 - If a pack is missing, the game falls back to procedural visuals. You can
-  also switch between the two under **Settings → World → Vegetation style**.
+  also switch between the two under **Settings → World** (*Vegetation style*
+  and *Enemy & weapon models*).
 
 Why not Git LFS? It would work, but every clone and CI run would count
 against GitHub's LFS storage and bandwidth quotas. These packs are
@@ -155,7 +164,8 @@ scripts/ui.gd        home / settings / controls / pause / death menus
 scripts/atmosphere.gd  sky, sun/moon, post-processing, time of day, fireflies
 scripts/shaders.gd   all shaders + procedural textures and foliage meshes
 scripts/decals.gd    pooled bullet holes and scorch marks
-scripts/nature_kit.gd  loads the optional asset pack, swaps in the wind shader
+scripts/nature_kit.gd  loads the optional vegetation pack, swaps in the wind shader
+scripts/model_kit.gd   loads the optional robot / gun / pickup models
 scripts/showcase.gd  scripted camera paths for recording videos
 assets/manifest.json third-party asset packs (fetched, not committed)
 tools/fetch_assets.py  downloads + verifies the packs
@@ -183,7 +193,11 @@ godot --headless -- --autotest --godmode --seconds=120
 
 Extra flags: `--tod=day|dusk|night`, `--preset=low|medium|high|ultra`,
 `--shots=<dir>` (saves screenshots; needs a real renderer, not `--headless`),
-`--veg=kit|procedural`, and `--debug` (prints straggler enemy state).
+`--veg=kit|procedural`, `--models=kit|procedural`, `--wave=N` (start at wave
+N), `--shot-times=a,b,c` (when to take screenshots) and `--debug` (prints
+straggler enemy state). `--gallery` lines up one of each enemy in front of a
+frozen player and steps through hip fire and aiming on both guns. Add
+`--live` and the enemies attack, then the bot fights back.
 
 To record a fly-through video with Godot's Movie Maker, run:
 
