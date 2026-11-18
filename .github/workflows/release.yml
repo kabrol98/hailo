@@ -110,6 +110,11 @@ jobs:
         run: |
           ~/godot/godot --headless --import 2>&1 | grep -vE 'Parameter "m" is null|^\s+at: ' || true
 
+      - name: Controller test (simulated input)
+        run: |
+          set -o pipefail
+          ~/godot/godot --headless -- --padtest 2>&1 | grep -E 'PASS|FAIL|PADTEST|SCRIPT ERROR'
+
       - name: Export macOS app (arm64)
         run: |
           set -euo pipefail

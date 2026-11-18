@@ -10,6 +10,7 @@ const ProjectileScript = preload("res://scripts/projectile.gd")
 const GrenadeScript = preload("res://scripts/grenade.gd")
 const Decals = preload("res://scripts/decals.gd")
 const ModelKit = preload("res://scripts/model_kit.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
 
 const WALK_SPEED := 6.2
 const SPRINT_SPEED := 9.6
@@ -34,6 +35,21 @@ var alive := true
 var godmode := false
 
 var mouse_sens := 0.0025
+# controller (set from settings by main.gd)
+var pad_look_speed := 4.5      # x 40 deg/s at full tilt
+var pad_invert_y := false
+var pad_deadzone := 0.15
+var aim_assist := true
+var crouch_toggle := false
+var aim_toggle := false
+var _crouch_latch := false
+var _aim_latch := false
+var _sprint_latch := false
+var _edge_t := 0.0             # how long the look stick has been held at full tilt
+var _ads_t := 0.0              # time since aiming down sights started
+var _was_aiming := false
+## Current aim-assist candidate (debug / tests): {"enemy", "err": Vector2(yaw, pitch), "friction": bool}
+var assist := {}
 var base_fov := BASE_FOV
 var invert_y := false
 var flashlight: SpotLight3D
@@ -311,14 +327,105 @@ func _unhandled_input(event: InputEvent) -> void:
 			_wheel_switch = true
 
 
+func _process(delta: float) -> void:
+	if alive and not autobot and not scripted and not get_tree().paused:
+		_pad_look(delta)
+
+
+## Right-stick look: dead zone + response curve, a turn boost when held at the
+## edge, slower while aiming, plus aim assist (slowdown over enemies and a
+## gentle pull while aiming down sights).
+func _pad_look(delta: float) -> void:
+	var raw := Vector2(
+		Input.get_action_raw_strength("look_right") - Input.get_action_raw_strength("look_left"),
+		Input.get_action_raw_strength("look_down") - Input.get_action_raw_strength("look_up"))
+	var stick := Gamepad.shape_stick(raw, pad_deadzone)
+	var tilt := stick.length()
+	_edge_t = _edge_t + delta if tilt > 0.92 else 0.0
+	var boost := 1.0 + 0.6 * clampf((_edge_t - 0.2) / 0.4, 0.0, 1.0)
+	var rate := deg_to_rad(pad_look_speed * 40.0) * boost
+	if aiming:
+		rate *= 0.5
+	_ads_t = _ads_t + delta if aiming else 0.0
+	assist = {}
+	if aim_assist and Gamepad.active:
+		assist = _assist_target()
+		if not assist.is_empty() and assist.friction:
+			rate *= 0.5
+	if tilt > 0.0:
+		rotate_y(-stick.x * rate * delta)
+		var pitch_sign := -1.0 if pad_invert_y else 1.0
+		head.rotation.x = clampf(head.rotation.x - stick.y * rate * 0.7 * pitch_sign * delta, deg_to_rad(-88), deg_to_rad(88))
+		sway += stick * 0.01
+	# magnetism: ease onto the target when aiming down sights, then track gently
+	if not assist.is_empty() and (aiming or in_fire):
+		var err: Vector2 = assist.err
+		var k := 9.0 if (aiming and _ads_t < 0.25) else 2.5
+		var f := clampf(k * delta, 0.0, 1.0)
+		rotate_y(err.x * f)
+		head.rotation.x = clampf(head.rotation.x + err.y * f, deg_to_rad(-88), deg_to_rad(88))
+
+
+func _assist_target() -> Dictionary:
+	var cam := camera.global_transform
+	var best := {}
+	var best_score := INF
+	var space := get_world_3d().direct_space_state
+	for e in get_tree().get_nodes_in_group("enemy"):
+		var en := e as Node3D
+		var p: Vector3 = en.global_position + Vector3.UP * float(e.head_y) * 0.8
+		var to := p - cam.origin
+		var dist := to.length()
+		if dist < 1.0 or dist > 70.0:
+			continue
+		var local := cam.basis.inverse() * (to / dist)
+		if local.z > 0.0:
+			continue
+		var yaw_err := atan2(-local.x, -local.z)
+		var pitch_err := atan2(local.y, sqrt(local.x * local.x + local.z * local.z))
+		var ang := Vector2(yaw_err, pitch_err).length()
+		var cone := clampf(atan(2.2 / dist), deg_to_rad(2.5), deg_to_rad(9.0))
+		if ang > cone:
+			continue
+		var score := ang / cone
+		if score >= best_score:
+			continue
+		var q := PhysicsRayQueryParameters3D.create(cam.origin, p, 1)
+		if not space.intersect_ray(q).is_empty():
+			continue
+		best_score = score
+		best = {"enemy": e, "err": Vector2(yaw_err, pitch_err),
+			"friction": ang < atan((float(e.radius) + 0.5) / dist)}
+	return best
+
+
 func _read_input() -> void:
 	in_move = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	in_fire = Input.is_action_pressed("fire")
 	in_fire_just = Input.is_action_just_pressed("fire")
-	in_aim = Input.is_action_pressed("aim")
 	in_jump = Input.is_action_just_pressed("jump")
-	in_sprint = Input.is_action_pressed("sprint")
-	in_crouch = Input.is_action_pressed("crouch")
+	# sprint: hold Shift, or click the left stick (stays on until you stop moving forward)
+	if Input.is_action_just_pressed("sprint_toggle"):
+		_sprint_latch = not _sprint_latch
+	if in_move.y > -0.3:
+		_sprint_latch = false
+	in_sprint = Input.is_action_pressed("sprint") or _sprint_latch
+	if crouch_toggle:
+		if Input.is_action_just_pressed("crouch"):
+			_crouch_latch = not _crouch_latch
+		if in_sprint or in_jump:
+			_crouch_latch = false
+		in_crouch = _crouch_latch
+	else:
+		in_crouch = Input.is_action_pressed("crouch")
+	if aim_toggle:
+		if Input.is_action_just_pressed("aim"):
+			_aim_latch = not _aim_latch
+		if in_sprint or reloading > 0.0 or switching > 0.0:
+			_aim_latch = false
+		in_aim = _aim_latch
+	else:
+		in_aim = Input.is_action_pressed("aim")
 	in_reload = Input.is_action_just_pressed("reload")
 	in_switch = Input.is_action_just_pressed("switch_weapon") or _wheel_switch
 	_wheel_switch = false
@@ -508,6 +615,7 @@ func _fire_carbine(w: Dictionary) -> void:
 		return
 	w.ammo -= 1
 	fire_cd = w.rate
+	Gamepad.rumble(0.18, 0.0, 0.05)
 	var hit := _aim_ray(_current_spread(w))
 	var end: Vector3 = hit.end
 	if hit.has("collider"):
@@ -556,6 +664,7 @@ func _fire_arc(w: Dictionary) -> void:
 	muzzle_light.light_color = Color(0.4, 0.8, 1.0)
 	muzzle_light.light_energy = 2.5
 	Sfx.play_ui(self, "plasma", -6.0)
+	Gamepad.rumble(0.25, 0.05, 0.07)
 	w.heat += w.heat_per_shot
 	if w.heat >= 1.0:
 		w.heat = 1.0
@@ -660,6 +769,7 @@ func take_damage(amount: float, _kind: String, from: Vector3, _hit_pos = null) -
 		amount -= s
 		if shield <= 0.0 and had_shield:
 			Sfx.play_ui(self, "shield_break", -2.0)
+			Gamepad.rumble(0.5, 0.7, 0.3)
 	if amount > 0.0:
 		health -= amount
 		Sfx.play_ui(self, "hurt", -2.0)
@@ -680,6 +790,7 @@ func apply_knockback(v: Vector3) -> void:
 
 func add_shake(a: float) -> void:
 	shake = minf(shake + a, 1.2)
+	Gamepad.rumble(a * 0.6, a, 0.12 + a * 0.3)
 
 
 func register_hit(res) -> void:
@@ -744,6 +855,7 @@ func on_wave_cleared() -> void:
 
 func _die() -> void:
 	alive = false
+	Gamepad.rumble(0.8, 1.0, 0.6)
 	died.emit()
 	var tw := create_tween()
 	tw.set_parallel(true)

@@ -15,10 +15,12 @@ const Shaders = preload("res://scripts/shaders.gd")
 const Decals = preload("res://scripts/decals.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const Showcase = preload("res://scripts/showcase.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
 
 const STATS_PATH := "user://verdant_hold.cfg"
 
 var settings: Node
+var gamepad: Node
 var world: Node3D
 var atmosphere: Node3D
 var arena: Node3D
@@ -57,6 +59,13 @@ func _ready() -> void:
 	settings = SettingsScript.new()
 	settings.name = "Settings"
 	add_child(settings)
+	gamepad = Gamepad.new()
+	gamepad.name = "Gamepad"
+	add_child(gamepad)
+	gamepad.device_changed.connect(_on_device_changed)
+	gamepad.lost.connect(func():
+		if state == "playing":
+			pause_game())
 	for a in args:
 		if a.begins_with("--tod="):
 			settings.values["time_of_day"] = a.get_slice("=", 1)
@@ -129,6 +138,10 @@ func _ready() -> void:
 	waves.announce.connect(func(t): hud.show_banner("WARNING", t, 4.0))
 	settings.changed.connect(apply_settings)
 	apply_settings("*")
+	if OS.get_cmdline_user_args().has("--padtest"):
+		var t: Node = load("res://tests/padtest.gd").new()
+		t.main = self
+		add_child(t)
 	if not showcase.is_empty():
 		autotest_limit = 0.0
 		for c in showcase:
@@ -142,27 +155,50 @@ func _ready() -> void:
 
 
 func _setup_input() -> void:
-	_bind("move_forward", [KEY_W, KEY_UP])
-	_bind("move_back", [KEY_S, KEY_DOWN])
-	_bind("move_left", [KEY_A, KEY_LEFT])
-	_bind("move_right", [KEY_D, KEY_RIGHT])
-	_bind("jump", [KEY_SPACE])
+	# keyboard / mouse, then the controller (Xbox layout; Godot maps other
+	# controllers onto the same buttons)
+	_bind("move_forward", [KEY_W, KEY_UP], [], [], [[JOY_AXIS_LEFT_Y, -1.0]], 0.2)
+	_bind("move_back", [KEY_S, KEY_DOWN], [], [], [[JOY_AXIS_LEFT_Y, 1.0]], 0.2)
+	_bind("move_left", [KEY_A, KEY_LEFT], [], [], [[JOY_AXIS_LEFT_X, -1.0]], 0.2)
+	_bind("move_right", [KEY_D, KEY_RIGHT], [], [], [[JOY_AXIS_LEFT_X, 1.0]], 0.2)
+	# look is read raw and shaped in player.gd (dead zone, curve, aim assist)
+	_bind("look_left", [], [], [], [[JOY_AXIS_RIGHT_X, -1.0]], 0.0)
+	_bind("look_right", [], [], [], [[JOY_AXIS_RIGHT_X, 1.0]], 0.0)
+	_bind("look_up", [], [], [], [[JOY_AXIS_RIGHT_Y, -1.0]], 0.0)
+	_bind("look_down", [], [], [], [[JOY_AXIS_RIGHT_Y, 1.0]], 0.0)
+	_bind("jump", [KEY_SPACE], [], [JOY_BUTTON_A])
 	_bind("sprint", [KEY_SHIFT])
-	_bind("crouch", [KEY_C, KEY_CTRL])
-	_bind("reload", [KEY_R])
-	_bind("switch_weapon", [KEY_Q])
+	_bind("sprint_toggle", [], [], [JOY_BUTTON_LEFT_STICK])
+	_bind("crouch", [KEY_C, KEY_CTRL], [], [JOY_BUTTON_B])
+	_bind("reload", [KEY_R], [], [JOY_BUTTON_X])
+	_bind("switch_weapon", [KEY_Q], [], [JOY_BUTTON_Y, JOY_BUTTON_LEFT_SHOULDER])
 	_bind("weapon_1", [KEY_1])
 	_bind("weapon_2", [KEY_2])
-	_bind("grenade", [KEY_G])
-	_bind("melee", [KEY_F, KEY_V])
-	_bind("flashlight", [KEY_T])
-	_bind("fire", [], [MOUSE_BUTTON_LEFT])
-	_bind("aim", [KEY_E], [MOUSE_BUTTON_RIGHT])
+	_bind("grenade", [KEY_G], [], [JOY_BUTTON_RIGHT_SHOULDER])
+	_bind("melee", [KEY_F, KEY_V], [], [JOY_BUTTON_RIGHT_STICK])
+	_bind("flashlight", [KEY_T], [], [JOY_BUTTON_DPAD_UP])
+	_bind("fire", [], [MOUSE_BUTTON_LEFT], [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]], 0.3)
+	_bind("aim", [KEY_E], [MOUSE_BUTTON_RIGHT], [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]], 0.3)
+	_bind("pause", [KEY_ESCAPE], [], [JOY_BUTTON_START])
+	# menus
+	_bind("ui_accept", [], [], [JOY_BUTTON_A])
+	_bind("ui_cancel", [], [], [JOY_BUTTON_B])
+	_bind("ui_up", [], [], [JOY_BUTTON_DPAD_UP], [[JOY_AXIS_LEFT_Y, -1.0]])
+	_bind("ui_down", [], [], [JOY_BUTTON_DPAD_DOWN], [[JOY_AXIS_LEFT_Y, 1.0]])
+	_bind("ui_left", [], [], [JOY_BUTTON_DPAD_LEFT], [[JOY_AXIS_LEFT_X, -1.0]])
+	_bind("ui_right", [], [], [JOY_BUTTON_DPAD_RIGHT], [[JOY_AXIS_LEFT_X, 1.0]])
+	_bind("tab_prev", [], [], [JOY_BUTTON_LEFT_SHOULDER])
+	_bind("tab_next", [], [], [JOY_BUTTON_RIGHT_SHOULDER])
 
 
-func _bind(action: String, keys: Array, buttons: Array = []) -> void:
+## Adds keys, mouse buttons, joypad buttons and joypad axes ([axis, direction])
+## to an action. `deadzone` < 0 keeps an existing action's dead zone.
+func _bind(action: String, keys: Array, buttons: Array = [], joy_buttons: Array = [],
+		joy_axes: Array = [], deadzone := -1.0) -> void:
 	if not InputMap.has_action(action):
-		InputMap.add_action(action)
+		InputMap.add_action(action, 0.5 if deadzone < 0.0 else deadzone)
+	elif deadzone >= 0.0:
+		InputMap.action_set_deadzone(action, deadzone)
 	for k in keys:
 		var ev := InputEventKey.new()
 		ev.physical_keycode = k
@@ -171,6 +207,28 @@ func _bind(action: String, keys: Array, buttons: Array = []) -> void:
 		var mb := InputEventMouseButton.new()
 		mb.button_index = b
 		InputMap.action_add_event(action, mb)
+	for jb in joy_buttons:
+		var e := InputEventJoypadButton.new()
+		e.button_index = jb
+		e.device = -1
+		InputMap.action_add_event(action, e)
+	for ja in joy_axes:
+		var m := InputEventJoypadMotion.new()
+		m.axis = ja[0]
+		m.axis_value = ja[1]
+		m.device = -1
+		InputMap.action_add_event(action, m)
+
+
+func _on_device_changed(using_pad: bool) -> void:
+	# controllers drive the menus by focus, so hide the pointer
+	if state != "playing":
+		Input.mouse_mode = Input.MOUSE_MODE_HIDDEN if using_pad else Input.MOUSE_MODE_VISIBLE
+	ui.on_device_changed(using_pad)
+
+
+func _menu_mouse_mode() -> int:
+	return Input.MOUSE_MODE_HIDDEN if Gamepad.active else Input.MOUSE_MODE_VISIBLE
 
 
 # ---------------------------------------------------------------- settings
@@ -217,6 +275,13 @@ func apply_settings(key: String = "*") -> void:
 	player.base_fov = s.get_v("fov")
 	player.mouse_sens = s.get_v("sensitivity")
 	player.invert_y = s.get_v("invert_y")
+	player.pad_look_speed = s.get_v("pad_look_speed")
+	player.pad_invert_y = s.get_v("pad_invert_y")
+	player.pad_deadzone = s.get_v("pad_deadzone")
+	player.aim_assist = s.get_v("aim_assist")
+	player.crouch_toggle = s.get_v("crouch_mode") == "toggle"
+	player.aim_toggle = s.get_v("aim_mode") == "toggle"
+	Gamepad.rumble_enabled = s.get_v("rumble")
 	# audio
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(float(s.get_v("master_volume")), 0.0001)))
 
@@ -227,7 +292,7 @@ func go_home_screen() -> void:
 	state = "home"
 	get_tree().paused = true
 	menu_cam.current = true
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.mouse_mode = _menu_mouse_mode()
 	ui.show_screen("home")
 
 
@@ -250,7 +315,7 @@ func pause_game() -> void:
 		return
 	state = "pause"
 	get_tree().paused = true
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.mouse_mode = _menu_mouse_mode()
 	ui.show_screen("pause")
 
 
@@ -275,7 +340,7 @@ func go_home() -> void:
 
 func _on_player_died() -> void:
 	state = "dead"
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.mouse_mode = _menu_mouse_mode()
 	new_best = false
 	if waves.wave > best_wave or (waves.wave == best_wave and player.score > best_score):
 		best_wave = waves.wave
@@ -299,28 +364,39 @@ func _input(event: InputEvent) -> void:
 		return
 	var key := event as InputEventKey
 	var pressed_key := key != null and key.pressed and not key.echo
-	match state:
-		"playing":
-			if pressed_key and key.physical_keycode == KEY_ESCAPE:
-				pause_game()
-				get_viewport().set_input_as_handled()
-			elif event is InputEventMouseButton and event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		"pause":
-			if pressed_key and key.physical_keycode == KEY_ESCAPE:
-				resume_game()
-				get_viewport().set_input_as_handled()
-		"settings", "controls":
-			if pressed_key and key.physical_keycode == KEY_ESCAPE:
-				ui.go_back()
-				get_viewport().set_input_as_handled()
-		"dead":
-			if pressed_key and key.physical_keycode == KEY_R:
-				restart()
+	if state == "playing" and event is InputEventMouseButton and event.pressed \
+			and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if state != "playing" and event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if pressed_key and key.physical_keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and state == "playing":
 		var f := 1.12 if key.physical_keycode == KEY_BRACKETRIGHT else 1.0 / 1.12
 		settings.set_v("sensitivity", clampf(float(settings.get_v("sensitivity")) * f, 0.0005, 0.008))
 		player.notify("Mouse sensitivity: %.2f" % (float(settings.get_v("sensitivity")) * 400.0))
+
+
+## Menu / pause navigation. Unhandled, so an open dropdown gets B / Esc first.
+func _unhandled_input(event: InputEvent) -> void:
+	if autotest or event.is_echo():
+		return
+	var pause := event.is_action_pressed("pause")
+	var back := event.is_action_pressed("ui_cancel")
+	match state:
+		"playing":
+			if pause:
+				pause_game()
+				get_viewport().set_input_as_handled()
+		"pause":
+			if pause or back:
+				resume_game()
+				get_viewport().set_input_as_handled()
+		"settings", "controls":
+			if pause or back:
+				ui.go_back()
+				get_viewport().set_input_as_handled()
+		"dead":
+			if event is InputEventKey and event.pressed and (event as InputEventKey).physical_keycode == KEY_R:
+				restart()
 
 
 func _notification(what: int) -> void:
@@ -423,7 +499,7 @@ func _run_gallery() -> void:
 func _take_shots() -> void:
 	if _shot_dir == "":
 		return
-	var times := [3.0, 6.0, 9.0, 11.0, 13.0]
+	var times := [3.0, 6.0, 9.0, 11.0, 13.0, 15.0]
 	var menus := true
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot-times="):
@@ -443,6 +519,10 @@ func _take_shots() -> void:
 			ui.show_screen("home")
 		elif _shot_i == 4:
 			ui.show_screen("settings")
+			if OS.get_cmdline_user_args().has("--shot-controls"):
+				ui.tabs.current_tab = 3   # Controller
+		elif _shot_i == 5:
+			ui.show_screen("controls")
 
 
 # ---------------------------------------------------------------- stats

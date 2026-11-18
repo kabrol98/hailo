@@ -78,22 +78,48 @@ included). First run the template step from [Releasing](#releasing) once.
 
 ## Controls
 
-| Key | Action |
-|---|---|
-| WASD / arrows | Move |
-| Mouse | Look |
-| Left click | Fire |
-| Right click (or E) | Aim / zoom |
-| Space | Jump |
-| Shift | Sprint |
-| C / Ctrl | Crouch |
-| R | Reload |
-| Q, mouse wheel, 1 / 2 | Switch weapon |
-| G | Throw frag grenade |
-| F / V | Melee |
-| T | Flashlight (comes on automatically at night) |
-| Esc | Pause menu (resume, settings, controls, quit) |
-| `[` / `]` | Mouse sensitivity down / up (saved) |
+Keyboard + mouse and controllers both work, and you can switch at any time.
+Prompts and menus follow whichever you touched last. An Xbox controller pairs
+with macOS over Bluetooth or plugs in by USB. PlayStation and most other
+controllers Godot recognises use the same button positions.
+
+| Action | Keyboard / mouse | Controller |
+|---|---|---|
+| Move | WASD / arrows | Left stick (analog: tilt gently to walk slowly) |
+| Look | Mouse | Right stick |
+| Fire | Left click | RT |
+| Aim / zoom | Right click (or E) | LT |
+| Jump | Space | A |
+| Sprint | Shift (hold) | Click left stick (stays on until you stop moving forward) |
+| Crouch | C / Ctrl | B |
+| Reload | R | X |
+| Switch weapon | Q, mouse wheel, 1 / 2 | Y or LB |
+| Throw frag grenade | G | RB |
+| Melee | F / V | Click right stick |
+| Flashlight (on automatically at night) | T | D-pad up |
+| Pause menu | Esc | Menu |
+| Mouse sensitivity down / up (saved) | `[` / `]` | Settings → Controller |
+
+**Menus with a controller:** use the D-pad or left stick to move, A to
+select, and B to go back. In Settings, LB / RB switch tabs and D-pad
+left / right changes values. The mouse pointer hides while you're using the
+controller.
+
+**Controller settings** (Settings → Controller):
+- **Look sensitivity.** Turning speeds up a little when you hold the stick at
+  the edge, and is halved while aiming.
+- **Invert Y.**
+- **Stick dead zone.** Raise it if the view drifts on an older controller.
+- **Aim assist.** On by default, controller only. The view slows slightly with
+  an enemy under the crosshair, and aiming down sights eases onto a nearby
+  target and follows it gently.
+- **Vibration.** Firing, hits, shield break and nearby explosions. macOS
+  doesn't pass rumble through for every controller; Xbox controllers over
+  Bluetooth often get none.
+
+Crouch and aim can each be set to **hold or toggle** under Settings → Gameplay
+(applies to keyboard and controller). Unplugging the controller mid-game
+pauses it.
 
 Trackpad: two-finger click is aim. Tap-to-click works for firing if it's enabled in macOS settings.
 
@@ -236,6 +262,8 @@ scripts/hud.gd       in-game HUD and radar
 scripts/projectile.gd, grenade.gd, barrel.gd, pickup.gd
 scripts/effects.gd   particles, tracers, explosions (with area damage)
 scripts/sfx.gd       synthesized sound effects
+scripts/gamepad.gd   controller state: active device, rumble, prompts, stick shaping
+tests/padtest.gd     simulated-controller test (godot --headless -- --padtest)
 ```
 
 Tuning lives near the top of each script: weapon stats in `player.gd`
@@ -294,6 +322,12 @@ N), `--shot-times=a,b,c` (when to take screenshots) and `--debug` (prints
 straggler enemy state). `--gallery` lines up one of each enemy in front of a
 frozen player and steps through hip fire and aiming on both guns. Add
 `--live` and the enemies attack, then the bot fights back.
+
+Controller test: `godot --headless -- --padtest` feeds simulated Xbox
+controller input into the real game. It checks menu navigation, look and
+dead zone, analog movement, sprint, firing, weapon switching, aim assist (on
+and off), pause and the Settings tab buttons. It prints PASS / FAIL per check
+and exits non-zero on any failure.
 
 To record a fly-through video with Godot's Movie Maker, run:
 

@@ -3,17 +3,22 @@ extends Control
 ## The settings screen is generated from Settings.OPTIONS.
 
 const SettingsScript = preload("res://scripts/settings.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
 
 const ACCENT := Color(1.0, 0.75, 0.25)
 const TEXT := Color(0.9, 0.97, 0.88)
 const DIM := Color(0.72, 0.82, 0.7, 0.8)
 const PANEL := Color(0.03, 0.07, 0.04, 0.88)
 
+## [action, keyboard / mouse, controller]
 const CONTROLS := [
-	["WASD / arrows", "Move"], ["Mouse", "Look"], ["Left click", "Fire"], ["Right click / E", "Aim / zoom"],
-	["Space", "Jump"], ["Shift", "Sprint"], ["C / Ctrl", "Crouch"], ["R", "Reload"],
-	["Q / wheel / 1-2", "Switch weapon"], ["G", "Throw frag"], ["F / V", "Melee"], ["T", "Flashlight"],
-	["Esc", "Pause menu"], ["[  ]", "Mouse sensitivity"],
+	["Move", "WASD / arrows", "Left stick"], ["Look", "Mouse", "Right stick"],
+	["Fire", "Left click", "RT"], ["Aim / zoom", "Right click / E", "LT"],
+	["Jump", "Space", "A"], ["Sprint", "Shift (hold)", "Click left stick"],
+	["Crouch", "C / Ctrl", "B"], ["Reload", "R", "X"],
+	["Switch weapon", "Q / wheel / 1-2", "Y or LB"], ["Throw frag", "G", "RB"],
+	["Melee", "F / V", "Click right stick"], ["Flashlight", "T", "D-pad up"],
+	["Pause menu", "Esc", "Menu"], ["Mouse sensitivity", "[  ]", "Settings → Controller"],
 ]
 
 var main: Node
@@ -27,6 +32,9 @@ var best_label: Label
 var gfx_label: Label
 var dead_stats: Label
 var dead_best: Label
+var tabs: TabContainer
+var redeploy_btn: Button
+var hint_labels: Array = []   # [Label, keyboard text, controller text]
 
 
 func _ready() -> void:
@@ -42,10 +50,56 @@ func _ready() -> void:
 		screens[k].visible = false
 	settings.changed.connect(_on_settings_changed)
 	_sync_controls()
+	on_device_changed(Gamepad.active)
 
 
 func _process(_d: float) -> void:
 	size = get_viewport_rect().size
+
+
+func _input(event: InputEvent) -> void:
+	if current != "settings" or tabs == null or event.is_echo():
+		return
+	# LB / RB flip settings tabs
+	var step := 0
+	if event.is_action_pressed("tab_prev"):
+		step = -1
+	elif event.is_action_pressed("tab_next"):
+		step = 1
+	if step != 0:
+		tabs.current_tab = wrapi(tabs.current_tab + step, 0, tabs.get_tab_count())
+		# the new tab only becomes visible this frame, so focus it afterwards
+		_focus_first.call_deferred(tabs.get_current_tab_control())
+		get_viewport().set_input_as_handled()
+
+
+## Switches button prompts between keyboard and controller.
+func on_device_changed(using_pad: bool) -> void:
+	for h in hint_labels:
+		(h[0] as Label).text = h[2] if using_pad else h[1]
+	if redeploy_btn:
+		redeploy_btn.text = "REDEPLOY" if using_pad else "REDEPLOY  (R)"
+	if using_pad and current != "" and get_viewport().gui_get_focus_owner() == null:
+		_focus_first(screens[current])
+
+
+## Gives keyboard / controller focus to the first focusable control under `n`.
+func _focus_first(n: Node) -> bool:
+	if n == null:
+		return false
+	if n is Control and (n as Control).focus_mode == Control.FOCUS_ALL and (n as Control).is_visible_in_tree():
+		(n as Control).grab_focus()
+		return true
+	for c in n.get_children():
+		if _focus_first(c):
+			return true
+	return false
+
+
+func _hint(kbm: String, pad: String, sz := 15) -> Label:
+	var l := _label(kbm, sz, DIM)
+	hint_labels.append([l, kbm, pad])
+	return l
 
 
 func show_screen(name: String) -> void:
@@ -57,6 +111,11 @@ func show_screen(name: String) -> void:
 		_refresh_home()
 	elif name == "settings":
 		_sync_controls()
+	if name == "":
+		get_viewport().gui_release_focus()
+	elif screens.has(name):
+		# focus the first button so a controller (or arrow keys) can drive the menu
+		_focus_first.call_deferred(screens[name])
 
 
 # ---------------------------------------------------------------- theme
@@ -182,6 +241,7 @@ func _build_home() -> Control:
 	vb.add_child(fill)
 	best_label = _label("", 18, DIM)
 	vb.add_child(best_label)
+	vb.add_child(_hint("Controller supported: plug in or pair one any time.", "D-pad / left stick to choose  ·  A to select  ·  B back"))
 	gfx_label = _label("", 16, DIM)
 	vb.add_child(gfx_label)
 	return root
@@ -218,10 +278,11 @@ func _build_settings() -> Control:
 	var root: Control = r[0]
 	var vb: VBoxContainer = r[1]
 	vb.add_child(_label("SETTINGS", 34, ACCENT))
-	var info := _label("This Mac: %s  ·  recommended preset: %s. Hover an option's name for details." % [
+	var info := _label("This Mac: %s  ·  recommended preset: %s." % [
 		SettingsScript.chip_name(), SettingsScript.recommended_preset().capitalize()], 15, DIM)
 	vb.add_child(info)
-	var tabs := TabContainer.new()
+	vb.add_child(_hint("Hover an option's name for details.", "LB / RB switch tabs  ·  D-pad to move and change values  ·  A select  ·  B back"))
+	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.custom_minimum_size.y = 470
 	vb.add_child(tabs)
@@ -232,6 +293,7 @@ func _build_settings() -> Control:
 			var sc := ScrollContainer.new()
 			sc.name = tname
 			sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			sc.follow_focus = true
 			tabs.add_child(sc)
 			var m := MarginContainer.new()
 			m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -348,18 +410,23 @@ func _sync_controls() -> void:
 # ---------------------------------------------------------------- controls / pause / dead
 
 func _build_controls() -> Control:
-	var r := _center_panel(Vector2(640, 0))
+	var r := _center_panel(Vector2(780, 0))
 	var vb: VBoxContainer = r[1]
 	vb.add_child(_label("CONTROLS", 34, ACCENT))
 	var grid := GridContainer.new()
-	grid.columns = 2
+	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 30)
 	grid.add_theme_constant_override("v_separation", 6)
+	for h in ["", "KEYBOARD / MOUSE", "CONTROLLER"]:
+		grid.add_child(_label(h, 14, DIM))
 	for c in CONTROLS:
-		var k := _label(c[0], 18, ACCENT)
-		k.custom_minimum_size.x = 200
+		var a := _label(c[0], 18, TEXT)
+		a.custom_minimum_size.x = 200
+		grid.add_child(a)
+		var k := _label(c[1], 18, ACCENT)
+		k.custom_minimum_size.x = 220
 		grid.add_child(k)
-		grid.add_child(_label(c[1], 18, TEXT))
+		grid.add_child(_label(c[2], 18, ACCENT))
 	vb.add_child(grid)
 	vb.add_child(_label("Shields recharge when you avoid damage; health doesn't, so grab red med-packs.\nCarbine: strong vs flesh, headshots once shields are down.\nArc Caster: shreds shields but overheats.\nThe glowing bunker cache refills ammo and frags every 30 s.", 15, DIM))
 	vb.add_child(_button("BACK", go_back, 20))
@@ -390,7 +457,8 @@ func _build_dead() -> Control:
 	dead_best = _label("NEW BEST", 20, ACCENT)
 	dead_best.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(dead_best)
-	vb.add_child(_button("REDEPLOY  (R)", func(): main.restart()))
+	redeploy_btn = _button("REDEPLOY  (R)", func(): main.restart())
+	vb.add_child(redeploy_btn)
 	vb.add_child(_button("HOME", func(): main.go_home()))
 	return r[0]
 
