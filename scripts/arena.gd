@@ -5,6 +5,19 @@ extends Node3D
 const BarrelScript = preload("res://scripts/barrel.gd")
 const PickupScript = preload("res://scripts/pickup.gd")
 const Shaders = preload("res://scripts/shaders.gd")
+const NatureKit = preload("res://scripts/nature_kit.gd")
+
+## [sway, sway_height, leaf tint, casts shadows, visual layer, follows grass density]
+const KIT_CFG := {
+	"tree": [0.5, 5.0, Color(0.78, 1.0, 0.72), true, 1, false],
+	"twisted": [0.45, 10.0, Color(0.85, 1.0, 0.78), true, 1, false],
+	"bush": [0.8, 1.2, Color(0.85, 1.0, 0.8), true, 2, false],
+	"plant": [1.0, 0.8, Color(0.9, 1.0, 0.85), false, 2, false],
+	"grass": [1.6, 1.5, Color(0.85, 1.0, 0.75), false, 2, true],
+	"flower": [1.2, 1.5, Color(1, 1, 1), false, 2, true],
+	"rock": [0.0, 0.0, Color(1, 1, 1), true, 1, false],
+	"small": [0.0, 0.0, Color(1, 1, 1), false, 2, false],
+}
 
 const HALF := 60.0
 const GRID_HALF := 120
@@ -21,6 +34,12 @@ var mats := {}
 var tree_spots: Array = []
 var grass_mm: MultiMesh
 var grass_total := 0
+## "kit" uses the stylized asset pack when it has been fetched; "procedural" never does.
+var vegetation_style := "kit"
+var use_kit := false
+var kit = null
+var kit_batches := {}
+var density_mms: Array = []
 
 # terrain
 var flat_zones: Array = []
@@ -67,6 +86,10 @@ func build() -> void:
 	m_cyl.radial_segments = 12
 	for i in 3:
 		canopies.append(Shaders.canopy_mesh(100 + i, 14))
+	use_kit = vegetation_style == "kit" and NatureKit.available()
+	if use_kit:
+		kit = NatureKit.new()
+	print("Vegetation: %s" % ("stylized asset pack" if use_kit else "procedural"))
 	_make_materials()
 	nav_region = NavigationRegion3D.new()
 	nav_region.name = "Nav"
@@ -90,6 +113,7 @@ func build() -> void:
 	_border_jungle()
 	_grass()
 	_ferns()
+	_kit_flush()
 	_bake_nav()
 
 
@@ -699,7 +723,10 @@ func _rocks() -> void:
 		body.add_child(cs)
 		body.position = Vector3(p.x, height_at(p.x, p.y) + s * 0.2, p.y)
 		nav_region.add_child(body)
-		_deco_mesh(m_rock, mats.rock, Vector3.ZERO, Vector3(s * 1.2, s * 0.8, s), Vector3(rng.randf() * 0.3, rng.randf() * TAU, 0), body)
+		if use_kit:
+			_kit_add("Rock_Medium_%d" % rng.randi_range(1, 3), Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s * 0.75), body.position - Vector3.UP * s * 0.3), "rock")
+		else:
+			_deco_mesh(m_rock, mats.rock, Vector3.ZERO, Vector3(s * 1.2, s * 0.8, s), Vector3(rng.randf() * 0.3, rng.randf() * TAU, 0), body)
 		_occupy(p, Vector2(s, s))
 
 
@@ -713,6 +740,9 @@ func _canopy(parent: Node3D, pos: Vector3, cr: float) -> void:
 
 func _tree(pos: Vector3, scale_f: float) -> void:
 	var palm := rng.randf() < 0.3
+	if use_kit and not palm:
+		_kit_tree(pos, scale_f)
+		return
 	var h := rng.randf_range(10.0, 17.0) * scale_f
 	var r := rng.randf_range(0.45, 0.75) * scale_f
 	if palm:
@@ -798,6 +828,9 @@ func _multimesh(mesh: Mesh, mat: Material, transforms: Array, colors: Array = []
 
 
 func _border_jungle() -> void:
+	if use_kit:
+		_border_kit()
+		return
 	var trunks: Array = []
 	var cans: Array[Array] = [[], [], []]
 	var cores: Array = []
@@ -867,10 +900,18 @@ func _grass() -> void:
 
 func set_grass_density(d: float) -> void:
 	if grass_mm != null:
-		grass_mm.visible_instance_count = clampi(int(grass_total * d / GRASS_MAX_DENSITY), 0, grass_total)
+		var blades := d * (0.6 if use_kit else 1.0)
+		grass_mm.visible_instance_count = clampi(int(grass_total * blades / GRASS_MAX_DENSITY), 0, grass_total)
+	for e in density_mms:
+		var mm: MultiMesh = e[0]
+		var total: int = e[1]
+		mm.visible_instance_count = clampi(int(total * minf(d, 1.6) / 1.6), 0, total)
 
 
 func _ferns() -> void:
+	if use_kit:
+		_undergrowth_kit()
+		return
 	var ferns: Array = []
 	var spots: Array = tree_spots.duplicate()
 	for i in 140:
@@ -900,3 +941,144 @@ func _bake_nav() -> void:
 	nm.filter_baking_aabb = AABB(Vector3(-HALF, -2, -HALF), Vector3(HALF * 2, 14, HALF * 2))
 	nav_region.navigation_mesh = nm
 	nav_region.bake_navigation_mesh(false)
+
+
+# ---------------------------------------------------------------- stylized asset pack
+
+func _kit_add(model: String, xf: Transform3D, cat: String) -> void:
+	var key := model + "|" + cat
+	if not kit_batches.has(key):
+		kit_batches[key] = {"model": model, "cat": cat, "xf": []}
+	kit_batches[key].xf.append(xf)
+
+
+func _kit_flush() -> void:
+	if not use_kit:
+		return
+	for key in kit_batches:
+		var b: Dictionary = kit_batches[key]
+		var cfg: Array = KIT_CFG[b.cat]
+		var pr: Dictionary = kit.proto(b.model, cfg[0], cfg[1], cfg[2])
+		for part in pr.parts:
+			var xfs: Array = []
+			for x in b.xf:
+				xfs.append((x as Transform3D) * (part.xform as Transform3D))
+			var mm := _multimesh(part.mesh, null, xfs, [], cfg[3], cfg[4])
+			if cfg[5]:
+				density_mms.append([mm, xfs.size()])
+	kit_batches.clear()
+
+
+func _ground_xf(p: Vector2, sc: float, sink := 0.1) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(p.x, height_at(p.x, p.y) - sink, p.y))
+
+
+func _kit_tree(pos: Vector3, scale_f: float) -> void:
+	var model: String
+	var cat: String
+	var sc: float
+	var r: float
+	if rng.randf() < 0.55:
+		model = "CommonTree_%d" % rng.randi_range(1, 5)
+		cat = "tree"
+		sc = rng.randf_range(1.9, 2.6) * scale_f
+		r = 0.32 * sc
+	else:
+		model = "TwistedTree_%d" % rng.randi_range(1, 5)
+		cat = "twisted"
+		sc = rng.randf_range(0.75, 1.0) * scale_f
+		r = 0.6 * sc
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var sh := CylinderShape3D.new()
+	sh.radius = r
+	sh.height = 12.0
+	cs.shape = sh
+	cs.position.y = 5.0
+	body.add_child(cs)
+	body.position = pos
+	nav_region.add_child(body)
+	_kit_add(model, _ground_xf(Vector2(pos.x, pos.z), sc, 0.15), cat)
+	tree_spots.append(Vector2(pos.x, pos.z))
+
+
+func _border_kit() -> void:
+	for i in 430:
+		var p := Vector2(rng.randf_range(-100, 100), rng.randf_range(-100, 100))
+		var edge := maxf(absf(p.x), absf(p.y))
+		if edge < HALF + 1.5:
+			continue
+		if rng.randf() < 0.65:
+			_kit_add("CommonTree_%d" % rng.randi_range(1, 5), _ground_xf(p, rng.randf_range(2.2, 3.2), 0.2), "tree")
+		else:
+			_kit_add("TwistedTree_%d" % rng.randi_range(1, 5), _ground_xf(p, rng.randf_range(0.9, 1.25), 0.2), "twisted")
+	# dense undergrowth wall along the playable edge
+	var steps := 150
+	for side in 4:
+		for i in steps:
+			var t := lerpf(-HALF - 3, HALF + 3, float(i) / steps)
+			var d := HALF + rng.randf_range(0.5, 3.5)
+			var p := Vector2(t, d)
+			match side:
+				1: p = Vector2(t, -d)
+				2: p = Vector2(d, t)
+				3: p = Vector2(-d, t)
+			var near_spawn := false
+			for sp in spawn_points:
+				if Vector2(sp.x, sp.z).distance_to(p) < 6.0:
+					near_spawn = true
+			var k := 0.5 if near_spawn else 1.0
+			if rng.randf() < 0.6:
+				_kit_add("Bush_Common", _ground_xf(p, rng.randf_range(1.5, 2.6) * k), "bush")
+			else:
+				_kit_add("Plant_1_Big", _ground_xf(p, rng.randf_range(1.3, 2.1) * k), "plant")
+
+
+func _undergrowth_kit() -> void:
+	var spots: Array = tree_spots.duplicate()
+	for i in 160:
+		spots.append(Vector2(rng.randf_range(-HALF, HALF), rng.randf_range(-HALF, HALF)))
+	for t in spots:
+		for k in 3:
+			var p: Vector2 = t + Vector2(rng.randf_range(-4.0, 4.0), rng.randf_range(-4.0, 4.0))
+			if not _is_free(p, 0.5) or _mask_at(path_mask, p.x, p.y) > 0.4 or absf(p.x) > HALF or absf(p.y) > HALF:
+				continue
+			var r := rng.randf()
+			if r < 0.35:
+				_kit_add("Fern_1", _ground_xf(p, rng.randf_range(1.0, 1.8), 0.05), "plant")
+			elif r < 0.55:
+				_kit_add("Plant_1_Big", _ground_xf(p, rng.randf_range(0.8, 1.3), 0.05), "plant")
+			elif r < 0.7:
+				_kit_add("Plant_7_Big", _ground_xf(p, rng.randf_range(1.5, 2.5), 0.02), "plant")
+			elif r < 0.8:
+				_kit_add("Bush_Common_Flowers", _ground_xf(p, rng.randf_range(0.8, 1.2), 0.1), "bush")
+			elif r < 0.9:
+				_kit_add("Mushroom_Common" if rng.randf() < 0.6 else "Mushroom_Laetiporus", _ground_xf(p, rng.randf_range(0.8, 1.5), 0.02), "small")
+			else:
+				_kit_add("Clover_1", _ground_xf(p, rng.randf_range(0.8, 1.2), 0.02), "flower")
+	# tall grass clumps and wildflowers across open ground
+	var placed := 0
+	var tries := 0
+	while placed < 3200 and tries < 12000:
+		tries += 1
+		var p := Vector2(rng.randf_range(-HALF, HALF), rng.randf_range(-HALF, HALF))
+		if not _is_free(p, 0.4) or _mask_at(path_mask, p.x, p.y) > 0.5 or _mask_at(wet_mask, p.x, p.y) > 0.7:
+			continue
+		placed += 1
+		var r := rng.randf()
+		if r < 0.65:
+			_kit_add("Grass_Common_Tall", _ground_xf(p, rng.randf_range(0.45, 0.85), 0.03), "grass")
+		elif r < 0.92:
+			_kit_add("Grass_Wispy_Tall", _ground_xf(p, rng.randf_range(0.45, 0.75), 0.03), "grass")
+		else:
+			_kit_add("Flower_3_Group" if rng.randf() < 0.5 else "Flower_4_Group", _ground_xf(p, rng.randf_range(0.45, 0.75), 0.03), "flower")
+	# pebbles scattered along the trodden trails
+	placed = 0
+	tries = 0
+	while placed < 500 and tries < 20000:
+		tries += 1
+		var p := Vector2(rng.randf_range(-HALF, HALF), rng.randf_range(-HALF, HALF))
+		if _mask_at(path_mask, p.x, p.y) < 0.5 or not _is_free(p, 0.2):
+			continue
+		placed += 1
+		_kit_add("Pebble_Round_%d" % rng.randi_range(1, 5), _ground_xf(p, rng.randf_range(0.8, 1.8), 0.02), "small")

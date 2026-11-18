@@ -12,6 +12,7 @@ const AtmosphereScript = preload("res://scripts/atmosphere.gd")
 const Shaders = preload("res://scripts/shaders.gd")
 const Decals = preload("res://scripts/decals.gd")
 const Sfx = preload("res://scripts/sfx.gd")
+const Showcase = preload("res://scripts/showcase.gd")
 
 const STATS_PATH := "user://verdant_hold.cfg"
 
@@ -36,6 +37,8 @@ var autotest_time := 0.0
 var autotest_limit := 90.0
 var _shot_i := 0
 var _shot_dir := ""
+var showcase: Array = []
+var _sc_t := 0.0
 
 
 func _ready() -> void:
@@ -47,12 +50,16 @@ func _ready() -> void:
 			autotest_limit = float(a.get_slice("=", 1))
 		elif a.begins_with("--shots="):
 			_shot_dir = a.get_slice("=", 1)
+		elif a.begins_with("--showcase="):
+			showcase = Array(a.get_slice("=", 1).split(","))
 	settings = SettingsScript.new()
 	settings.name = "Settings"
 	add_child(settings)
 	for a in args:
 		if a.begins_with("--tod="):
 			settings.values["time_of_day"] = a.get_slice("=", 1)
+		elif a.begins_with("--veg="):
+			settings.values["vegetation"] = a.get_slice("=", 1)
 		elif a.begins_with("--preset="):
 			var pn := a.get_slice("=", 1)
 			settings.values["preset"] = pn
@@ -73,6 +80,7 @@ func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
 	arena = ArenaScript.new()
 	arena.name = "Arena"
+	arena.vegetation_style = settings.get_v("vegetation")
 	world.add_child(arena)
 	arena.build()
 	print("Arena built in %d ms" % (Time.get_ticks_msec() - t0))
@@ -112,6 +120,11 @@ func _ready() -> void:
 	waves.announce.connect(func(t): hud.show_banner("WARNING", t, 4.0))
 	settings.changed.connect(apply_settings)
 	apply_settings("*")
+	if not showcase.is_empty():
+		autotest_limit = 0.0
+		for c in showcase:
+			autotest_limit += float(Showcase.clip(c).dur)
+		waves.intermission = 2.0
 	if autotest or SettingsScript.quick_start:
 		SettingsScript.quick_start = false
 		start_game()
@@ -155,6 +168,12 @@ func _bind(action: String, keys: Array, buttons: Array = []) -> void:
 
 func apply_settings(key: String = "*") -> void:
 	var s := settings
+	if key == "vegetation":
+		# the level is built once at load, so rebuild it
+		SettingsScript.quick_start = false
+		get_tree().paused = false
+		get_tree().call_deferred("reload_current_scene")
+		return
 	atmosphere.apply_quality(s)
 	if key == "*" or key == "time_of_day":
 		var tod: String = s.get_v("time_of_day")
@@ -310,6 +329,7 @@ func _process(delta: float) -> void:
 		return
 	autotest_time += delta
 	_take_shots()
+	_run_showcase(delta)
 	if Engine.get_process_frames() % 300 == 0:
 		print("AUTOTEST t=%.1f wave=%d alive_enemies=%d remaining=%d kills=%d hp=%.0f sh=%.0f fps=%d" % [
 			autotest_time, waves.wave, get_tree().get_nodes_in_group("enemy").size(), waves.remaining(),
@@ -321,6 +341,28 @@ func _process(delta: float) -> void:
 	if autotest_time >= autotest_limit or (state == "dead" and autotest_time > 3.0 and not player.godmode):
 		print("AUTOTEST DONE: wave=%d kills=%d score=%d alive=%s nodes=%d" % [waves.wave, player.kills, player.score, player.alive, get_tree().get_node_count()])
 		get_tree().quit()
+
+
+func _run_showcase(delta: float) -> void:
+	if showcase.is_empty():
+		return
+	_sc_t += delta
+	var t := _sc_t
+	for name in showcase:
+		var c := Showcase.clip(name)
+		if t <= float(c.dur) or name == showcase[-1]:
+			if name == "fps":
+				player.camera.current = true
+				hud.visible = true
+			else:
+				var s := Showcase.sample(c, t)
+				menu_cam.current = true
+				hud.visible = false
+				menu_cam.fov = 62.0
+				menu_cam.global_position = s[0]
+				menu_cam.look_at(s[1], Vector3.UP)
+			return
+		t -= float(c.dur)
 
 
 ## Screenshot helper for automated visual checks: --shots=<dir>

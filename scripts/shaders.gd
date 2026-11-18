@@ -121,6 +121,7 @@ shader_type spatial;
 render_mode cull_disabled;
 uniform float wind_strength = 1.0;
 uniform float sway = 1.0;
+uniform float sway_height = 0.0;
 uniform sampler2D leaf_tex : source_color, filter_linear_mipmap, repeat_disable;
 uniform vec3 tint : source_color = vec3(1.0);
 uniform float translucency = 0.6;
@@ -128,6 +129,9 @@ void vertex() {
 	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float w = sin(TIME * 1.3 + wp.x * 0.2 + wp.y * 0.3) * 0.5 + sin(TIME * 2.9 + wp.z * 0.5 + wp.x * 0.2) * 0.2;
 	vec3 disp = vec3(w, w * 0.25, w * 0.7) * wind_strength * sway * 0.12;
+	if (sway_height > 0.0) {
+		disp *= clamp(VERTEX.y / sway_height, 0.0, 1.5);
+	}
 	float s2 = max(dot(MODEL_MATRIX[0].xyz, MODEL_MATRIX[0].xyz), 0.0001);
 	VERTEX += (disp * mat3(MODEL_MATRIX)) / s2;
 }
@@ -287,8 +291,9 @@ static func grass_material() -> ShaderMaterial:
 	return m
 
 
-static func foliage_material(tex: Texture2D, tint: Color, sway := 1.0, translucency := 0.6) -> ShaderMaterial:
+static func foliage_material(tex: Texture2D, tint: Color, sway := 1.0, translucency := 0.6, sway_height := 0.0) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
+	m.set_shader_parameter("sway_height", sway_height)
 	m.shader = _shader("foliage", FOLIAGE)
 	m.set_shader_parameter("leaf_tex", tex)
 	m.set_shader_parameter("tint", tint)

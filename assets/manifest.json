@@ -1,0 +1,18 @@
+{
+  "_comment": "Third-party assets are NOT committed. Run `python3 tools/fetch_assets.py` to download them. The game falls back to procedural visuals when a pack is missing.",
+  "packs": [
+    {
+      "id": "stylized_nature_megakit",
+      "title": "Stylized Nature MegaKit (Standard / free edition)",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/stylized-nature-megakit",
+      "homepage": "https://quaternius.com/packs/stylizednaturemegakit.html",
+      "url": "https://opengameart.org/sites/default/files/stylized_nature_megakitstandard.zip",
+      "sha256": "298f6732b872e4cf7b30e6e7abf9641c7f6dc6b326df37ac089533ed7e3d58c9",
+      "size_bytes": 104088529,
+      "dest": "assets/third_party/stylized_nature",
+      "extract": ["glTF/*", "License_Standard.txt"]
+    }
+  ]
+}

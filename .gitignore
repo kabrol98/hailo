@@ -1,2 +1,4 @@
 .godot/
 dist/
+assets/third_party/
+assets/.cache/

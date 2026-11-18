@@ -12,7 +12,11 @@ are all generated in code, so the project needs no external assets.
    If macOS blocks it the first time, right-click the app and choose **Open**.
 2. Launch Godot. In the Project Manager click **Import**, pick this folder's
    `project.godot`, then **Import & Edit**. The first import takes a few seconds.
-3. Press **Play** (▶ at top right, or `Cmd+B`). The home screen opens. Pick **Settings** to adjust graphics or time of day, or **Deploy** to play.
+3. *(Optional, recommended)* Download the stylized asset pack. From this
+   folder in Terminal, run `python3 tools/fetch_assets.py` (~100 MB, about
+   20 s), then reopen the project so Godot imports it. Without it the game
+   uses its procedural vegetation.
+4. Press **Play** (▶ at top right, or `Cmd+B`). The home screen opens. Pick **Settings** to adjust graphics or time of day, or **Deploy** to play.
 
 To get a standalone `.app`, use **Project → Export → Add… → macOS**. Godot will
 offer to download the export templates.
@@ -37,6 +41,30 @@ offer to download the export templates.
 | `[` / `]` | Mouse sensitivity down / up (saved) |
 
 Trackpad: two-finger click is aim. Tap-to-click works for firing if it's enabled in macOS settings.
+
+## Third-party assets (not committed)
+
+The vegetation uses the free **Stylized Nature MegaKit** by Quaternius
+(CC0, public domain): trees, ferns, big-leaf plants, bushes, grass clumps,
+flowers, mushrooms, rocks and pebbles. The trees and plants sway in the wind
+via the game's foliage shader. Palms and all buildings are still procedural.
+
+Assets are **not stored in git**. Instead:
+
+- `assets/manifest.json` (committed) pins each pack's URL, SHA-256, size,
+  author and license.
+- `tools/fetch_assets.py` (committed, standard-library Python) downloads the
+  packs, verifies the checksum, and extracts them into
+  `assets/third_party/` (git-ignored).
+- If a pack is missing, the game falls back to procedural visuals. You can
+  also switch between the two under **Settings → World → Vegetation style**.
+
+Why not Git LFS? It would work, but every clone and CI run would count
+against GitHub's LFS storage and bandwidth quotas. These packs are
+already public, CC0 and permanently hosted, so a pinned manifest gives the
+same reproducibility for free. LFS is the better fit later for assets we
+create ourselves, or for anything without a stable public URL. To add a pack,
+append an entry to the manifest. Get the checksum with `shasum -a 256 file.zip`.
 
 ## Settings & graphics
 
@@ -127,6 +155,10 @@ scripts/ui.gd        home / settings / controls / pause / death menus
 scripts/atmosphere.gd  sky, sun/moon, post-processing, time of day, fireflies
 scripts/shaders.gd   all shaders + procedural textures and foliage meshes
 scripts/decals.gd    pooled bullet holes and scorch marks
+scripts/nature_kit.gd  loads the optional asset pack, swaps in the wind shader
+scripts/showcase.gd  scripted camera paths for recording videos
+assets/manifest.json third-party asset packs (fetched, not committed)
+tools/fetch_assets.py  downloads + verifies the packs
 scripts/arena.gd     procedural level + runtime navmesh bake
 scripts/player.gd    movement, shields/health, weapons, grenades, melee
 scripts/enemy.gd     the four Thorn enemy types and their AI
@@ -151,4 +183,10 @@ godot --headless -- --autotest --godmode --seconds=120
 
 Extra flags: `--tod=day|dusk|night`, `--preset=low|medium|high|ultra`,
 `--shots=<dir>` (saves screenshots; needs a real renderer, not `--headless`),
-and `--debug` (prints straggler enemy state).
+`--veg=kit|procedural`, and `--debug` (prints straggler enemy state).
+
+To record a fly-through video with Godot's Movie Maker, run:
+
+```bash
+godot --write-movie out.avi --fixed-fps 24 -- --autotest --godmode --showcase=overview,trail,ruins,creek,crash,fps
+```
