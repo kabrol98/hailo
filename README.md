@@ -34,9 +34,23 @@ Options, passed as environment variables or after `bash -s --`:
 
 | | |
 |---|---|
-| `VERDANT_VERSION=v0.2.0` | install a specific release instead of the latest |
-| `VERDANT_DIR=~/Games` | install somewhere else |
+| `VERDANT_VERSION=v0.2.0` | install a specific release instead of the latest (downgrades work too) |
+| `VERDANT_DIR=~/Games` | install somewhere else; an existing copy elsewhere is moved there |
+| `--force` | reinstall even if that version is already installed |
 | `--uninstall` | remove the app (add `--purge` to also delete settings and best scores) |
+
+**Updating:** run the same command again.
+- **Version check.** The script reads which version is installed. If it's
+  already the target release, it says "Already up to date" without
+  downloading anything.
+- **Same location.** Otherwise it upgrades in place, wherever the app is
+  installed, including a custom `VERDANT_DIR` from an earlier run.
+- **Game running.** If the game is open, it offers to quit it first. Without
+  a terminal to ask on, it warns that the new version is used next launch.
+- **Safe swap.** The new version is staged in the same folder and swapped in
+  with a rename. The old app is only deleted once the new one is in place. If
+  anything fails, the old one stays untouched.
+- **Settings and best scores are kept.**
 
 e.g. `curl -fsSL …/install.sh | bash -s -- --uninstall`
 
