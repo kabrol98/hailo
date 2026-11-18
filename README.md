@@ -2,10 +2,51 @@
 
 An original first-person wave-defense shooter built in Godot 4. You hold a jungle
 outpost against escalating waves of **the Thorn**, biomechanical creatures that
-come out of the jungle trails. The level, enemies, weapons, effects and sounds
-are all generated in code, so the project needs no external assets.
+come out of the jungle trails. The level, effects and sounds are generated in
+code. Optional free CC0 packs provide the vegetation, robot enemies and guns
+(see [Third-party assets](#third-party-assets-not-committed)).
 
-## Run it on a Mac
+## Install (Apple Silicon Mac)
+
+Prebuilt builds are attached to each [GitHub release](https://github.com/kabrol98/hailo/releases).
+They need an M1 or newer Mac on macOS 11+. Install with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kabrol98/hailo/main/install.sh | bash
+```
+
+The script downloads the latest release and checks its SHA-256. It installs
+`Verdant Hold.app` into `/Applications`, or `~/Applications` if that isn't
+writable, and clears the quarantine flag so it opens without a Gatekeeper
+prompt. Then launch it from Launchpad or Spotlight.
+
+**While the repo is private** the raw URL above returns 404. Run the script
+through the GitHub CLI instead (after `gh auth login`):
+
+```bash
+gh api repos/kabrol98/hailo/contents/install.sh -H "Accept: application/vnd.github.raw" | bash
+```
+
+The script then downloads the release with `gh` (or with `GITHUB_TOKEN` if
+that's set).
+
+Options, passed as environment variables or after `bash -s --`:
+
+| | |
+|---|---|
+| `VERDANT_VERSION=v0.2.0` | install a specific release instead of the latest |
+| `VERDANT_DIR=~/Games` | install somewhere else |
+| `--uninstall` | remove the app (add `--purge` to also delete settings and best scores) |
+
+e.g. `curl -fsSL …/install.sh | bash -s -- --uninstall`
+
+The app is ad-hoc signed but **not notarized**, which needs a paid Apple
+Developer account. Installing with the script or `curl` avoids the warning. If
+you download the zip in a browser instead, macOS will say it "can't be
+verified". Right-click the app and choose **Open**, or run
+`xattr -dr com.apple.quarantine "/Applications/Verdant Hold.app"`.
+
+## Run it from source on a Mac
 
 1. Download **Godot 4.3 or newer** (the standard build, not .NET) from
    https://godotengine.org/download/macos/ and drag it into Applications.
@@ -18,8 +59,8 @@ are all generated in code, so the project needs no external assets.
    game uses its procedural vegetation, enemies and guns.
 4. Press **Play** (▶ at top right, or `Cmd+B`). The home screen opens. Pick **Settings** to adjust graphics or time of day, or **Deploy** to play.
 
-To get a standalone `.app`, use **Project → Export → Add… → macOS**. Godot will
-offer to download the export templates.
+To build the `.app` yourself, use **Project → Export → macOS** (a preset is
+included). First run the template step from [Releasing](#releasing) once.
 
 ## Controls
 
@@ -169,6 +210,10 @@ scripts/model_kit.gd   loads the optional robot / gun / pickup models
 scripts/showcase.gd  scripted camera paths for recording videos
 assets/manifest.json third-party asset packs (fetched, not committed)
 tools/fetch_assets.py  downloads + verifies the packs
+tools/make_arm64_template.py  arm64-only macOS export template (for releases)
+install.sh           curl | bash installer for the release builds
+export_presets.cfg   macOS (arm64) export preset
+.github/workflows/release.yml  builds + attaches the app on each release
 scripts/arena.gd     procedural level + runtime navmesh bake
 scripts/player.gd    movement, shields/health, weapons, grenades, melee
 scripts/enemy.gd     the four Thorn enemy types and their AI
@@ -182,6 +227,43 @@ scripts/sfx.gd       synthesized sound effects
 Tuning lives near the top of each script: weapon stats in `player.gd`
 (`weapons = [...]`), enemy stats in `enemy.gd` (`setup()`), and wave sizes in
 `waves.gd` (`_composition()`).
+
+## Releasing
+
+`.github/workflows/release.yml` builds the Apple Silicon app whenever a GitHub
+release is **published**:
+
+1. Create a tag and release, e.g. `gh release create v0.2.0 --generate-notes`,
+   or use **Releases → Draft a new release** on GitHub.
+2. The workflow runs on Ubuntu. It installs Godot 4.3 and its macOS export
+   template (cached after the first run) and downloads the asset packs from the
+   manifest. It stamps the tag into the app version, then exports.
+3. It checks that the executable is a thin arm64 Mach-O with a code signature,
+   then uploads to the release:
+   - `VerdantHold-macos-arm64.zip`
+   - its `.sha256`
+   - `install.sh`
+
+You can also run it by hand from **Actions → Release build → Run workflow**.
+Leave the tag empty and you get a test build as a workflow artifact, with no
+release needed.
+
+Godot only ships *universal* (Intel + Apple Silicon) macOS templates.
+`tools/make_arm64_template.py` cuts the arm64 slice out of the universal
+binary with plain Python, so the shipped app is arm64-only. The executable is
+about 73 MB instead of 153 MB. To export locally the same way:
+
+```bash
+mkdir -p build/templates && touch build/.gdignore
+```
+```bash
+python3 tools/make_arm64_template.py ~/Library/Application\ Support/Godot/export_templates/4.3.stable/macos.zip build/templates/macos_arm64.zip
+```
+```bash
+godot --headless --export-release macOS build/VerdantHold-macos-arm64.zip
+```
+
+(Install the export templates once via **Editor → Manage Export Templates**.)
 
 ## Automated test mode
 

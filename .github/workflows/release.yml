@@ -1,0 +1,159 @@
+# Builds the macOS (Apple Silicon / arm64) app and attaches it to a GitHub release.
+#
+# Triggers:
+#   - publishing a release (Releases -> Draft a new release -> Publish)
+#   - manually (Actions -> "Release build" -> Run workflow), optionally with a
+#     tag to upload to; without one the build is only kept as a workflow artifact.
+#
+# The export runs on Linux: Godot exports macOS apps from any OS and gives them
+# an ad-hoc code signature, which Apple Silicon needs to launch them. The app
+# isn't notarized (that needs a paid Apple developer account), see README.
+
+name: Release build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to upload to (leave empty for an artifact-only build)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: "4.3"
+  GODOT_STATUS: "stable"
+  ASSET_NAME: VerdantHold-macos-arm64.zip
+
+jobs:
+  macos-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out version
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -n "$TAG" ]; then
+            VERSION="${TAG#v}"
+          else
+            VERSION="0.0.0-dev.${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION (tag: ${TAG:-none})"
+
+      - name: Cache Godot and export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_STATUS }}-macos-templates-v1
+
+      - name: Install Godot ${{ env.GODOT_VERSION }} and the macOS export template
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          V="${GODOT_VERSION}-${GODOT_STATUS}"
+          BASE="https://github.com/godotengine/godot-builds/releases/download/$V"
+          mkdir -p ~/godot
+          curl -fsSL --retry 3 -o /tmp/godot.zip "$BASE/Godot_v${V}_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d ~/godot
+          mv ~/godot/Godot_v${V}_linux.x86_64 ~/godot/godot
+          chmod +x ~/godot/godot
+          # The template bundle is ~1 GB; keep only what the macOS export needs.
+          curl -fsSL --retry 3 -o /tmp/templates.tpz "$BASE/Godot_v${V}_export_templates.tpz"
+          T=~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_STATUS}
+          mkdir -p "$T"
+          unzip -oj /tmp/templates.tpz templates/macos.zip templates/version.txt -d "$T"
+          rm /tmp/templates.tpz /tmp/godot.zip
+
+      - name: Make an arm64-only export template
+        # Godot ships universal (Intel + Apple Silicon) templates; cut out the
+        # arm64 slice so the app is Apple Silicon-only and half the size.
+        run: |
+          mkdir -p build/templates && touch build/.gdignore
+          python3 tools/make_arm64_template.py \
+            ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_STATUS}/macos.zip \
+            build/templates/macos_arm64.zip
+
+      - name: Cache third-party asset downloads
+        uses: actions/cache@v4
+        with:
+          path: assets/.cache
+          key: assets-${{ hashFiles('assets/manifest.json') }}
+
+      - name: Fetch third-party assets (CC0, verified by SHA-256)
+        run: python3 tools/fetch_assets.py
+
+      - name: Stamp version into the export preset
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          sed -i "s/^application\/short_version=.*/application\/short_version=\"${V%%-*}\"/" export_presets.cfg
+          sed -i "s/^application\/version=.*/application\/version=\"$V\"/" export_presets.cfg
+          grep -E '^application/(short_)?version' export_presets.cfg
+
+      - name: Import project
+        # First run imports every model and texture into .godot/.
+        run: |
+          ~/godot/godot --headless --import 2>&1 | grep -vE 'Parameter "m" is null|^\s+at: ' || true
+
+      - name: Export macOS app (arm64)
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          ~/godot/godot --headless --export-release "macOS" "build/$ASSET_NAME" 2>&1 \
+            | grep -vE 'Parameter "m" is null|^\s+at: ' || true
+          test -s "build/$ASSET_NAME" || { echo "::error::Export produced no file"; exit 1; }
+          # Sanity checks: the bundle is there, arm64, signed (ad-hoc) and contains the game data.
+          unzip -l "build/$ASSET_NAME" | grep -q "Verdant Hold.app/Contents/MacOS/" \
+            || { echo "::error::App bundle missing from zip"; exit 1; }
+          unzip -l "build/$ASSET_NAME" | grep -q "Contents/_CodeSignature/CodeResources" \
+            || { echo "::error::App is not code-signed"; exit 1; }
+          unzip -l "build/$ASSET_NAME" | grep -q "Contents/Resources/Verdant Hold.pck" \
+            || { echo "::error::Game data (.pck) missing"; exit 1; }
+          # The executable must be a thin arm64 Mach-O carrying a code signature.
+          unzip -p "build/$ASSET_NAME" "Verdant Hold.app/Contents/MacOS/Verdant Hold" > /tmp/vh_bin
+          python3 - <<'PY'
+          import struct
+          d = open("/tmp/vh_bin", "rb").read()
+          magic, cpu, _, _, ncmds = struct.unpack("<IiiII", d[:20])
+          assert magic == 0xFEEDFACF and cpu == 0x0100000C, "executable is not thin arm64"
+          off, cmds = 32, []
+          for _ in range(ncmds):
+              c, sz = struct.unpack("<II", d[off:off + 8]); cmds.append(c); off += sz
+          assert 0x1D in cmds, "executable has no code signature"
+          print("arm64 Mach-O, signed (ad-hoc)")
+          PY
+          ls -la build
+          (cd build && sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256" && cat "$ASSET_NAME.sha256")
+
+      - name: Keep build as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VerdantHold-macos-arm64-${{ steps.ver.outputs.version }}
+          path: |
+            build/${{ env.ASSET_NAME }}
+            build/${{ env.ASSET_NAME }}.sha256
+          retention-days: 14
+
+      - name: Attach to release
+        if: steps.ver.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.ver.outputs.tag }}" \
+            "build/$ASSET_NAME" "build/$ASSET_NAME.sha256" install.sh \
+            --clobber --repo "${{ github.repository }}"
