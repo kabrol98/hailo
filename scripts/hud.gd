@@ -74,7 +74,7 @@ func _draw() -> void:
 		if banner_sub != "":
 			_ctext(size.y * 0.28 + 38, banner_sub, 20, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, a))
 	if player.msg_t > 0.0:
-		_ctext(size.y * 0.68, player.msg, 18, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, clampf(player.msg_t, 0.0, 1.0)))
+		_ctext(size.y * 0.62, player.msg, 18, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, clampf(player.msg_t, 0.0, 1.0)))
 	if main.settings.get_v("show_fps"):
 		_text(Vector2(size.x - 120, 30), "%d FPS" % Engine.get_frames_per_second(), 16, C_DIM)
 
