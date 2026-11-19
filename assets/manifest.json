@@ -53,6 +53,23 @@
         "License.txt"
       ],
       "used_for": "Trooper (George / Leela / Mike variants), Bulwark (Stan)"
+    },
+    {
+      "id": "ultimate_gun_pack",
+      "title": "Ultimate Gun Pack (July 2019)",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/low-poly-guns-pack",
+      "homepage": "https://quaternius.com/packs/ultimategun.html",
+      "url": "https://opengameart.org/sites/default/files/ultimate_gun_pack_by_quaternius.zip",
+      "sha256": "6bbae4cd42a520bd2ed95881394293e90804a63abdaf121e3b55fa08b7311737",
+      "size_bytes": 7375704,
+      "dest": "assets/third_party/guns",
+      "strip": "Ultimate Gun Pack - July 2019/",
+      "extract": [
+        "FBX/Shotgun_ShortStock.fbx"
+      ],
+      "used_for": "KR-4 Breacher shotgun"
     }
   ]
 }

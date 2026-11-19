@@ -16,6 +16,8 @@ const Decals = preload("res://scripts/decals.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const Showcase = preload("res://scripts/showcase.gd")
 const Gamepad = preload("res://scripts/gamepad.gd")
+const Difficulty = preload("res://scripts/difficulty.gd")
+const WeaponPickup = preload("res://scripts/weapon_pickup.gd")
 
 const STATS_PATH := "user://verdant_hold.cfg"
 
@@ -73,12 +75,16 @@ func _ready() -> void:
 			settings.values["vegetation"] = a.get_slice("=", 1)
 		elif a.begins_with("--models="):
 			settings.values["models"] = a.get_slice("=", 1)
+		elif a.begins_with("--difficulty="):
+			settings.values["difficulty"] = a.get_slice("=", 1)
 		elif a.begins_with("--preset="):
 			var pn := a.get_slice("=", 1)
 			settings.values["preset"] = pn
 			for k in SettingsScript.PRESETS[pn].keys():
 				settings.values[k] = SettingsScript.PRESETS[pn][k]
 	_setup_input()
+	Difficulty.level = settings.get_v("difficulty")
+	WeaponPickup.current_wave = 0
 	_load_stats()
 	Sfx.preload_all()
 	Decals.clear()
@@ -134,14 +140,16 @@ func _ready() -> void:
 	ui.settings = settings
 	ui_layer.add_child(ui)
 	waves.wave_started.connect(func(n): hud.show_banner("WAVE %d" % n, "%d hostiles inbound" % waves.remaining(), 3.0))
+	waves.wave_started.connect(_on_wave_started)
 	waves.wave_cleared.connect(func(n): hud.show_banner("WAVE %d CLEARED" % n, "Resupply at the bunker cache", 3.5))
 	waves.announce.connect(func(t): hud.show_banner("WARNING", t, 4.0))
 	settings.changed.connect(apply_settings)
 	apply_settings("*")
-	if OS.get_cmdline_user_args().has("--padtest"):
-		var t: Node = load("res://tests/padtest.gd").new()
-		t.main = self
-		add_child(t)
+	for test in ["padtest", "weapontest"]:
+		if OS.get_cmdline_user_args().has("--" + test):
+			var t: Node = load("res://tests/%s.gd" % test).new()
+			t.main = self
+			add_child(t)
 	if not showcase.is_empty():
 		autotest_limit = 0.0
 		for c in showcase:
@@ -170,7 +178,10 @@ func _setup_input() -> void:
 	_bind("sprint", [KEY_SHIFT])
 	_bind("sprint_toggle", [], [], [JOY_BUTTON_LEFT_STICK])
 	_bind("crouch", [KEY_C, KEY_CTRL], [], [JOY_BUTTON_B])
-	_bind("reload", [KEY_R], [], [JOY_BUTTON_X])
+	_bind("reload", [KEY_R])
+	_bind("interact", [KEY_E])
+	# controller X: tap to reload, hold to pick up (player.gd)
+	_bind("pad_x", [], [], [JOY_BUTTON_X])
 	_bind("switch_weapon", [KEY_Q], [], [JOY_BUTTON_Y, JOY_BUTTON_LEFT_SHOULDER])
 	_bind("weapon_1", [KEY_1])
 	_bind("weapon_2", [KEY_2])
@@ -178,7 +189,7 @@ func _setup_input() -> void:
 	_bind("melee", [KEY_F, KEY_V], [], [JOY_BUTTON_RIGHT_STICK])
 	_bind("flashlight", [KEY_T], [], [JOY_BUTTON_DPAD_UP])
 	_bind("fire", [], [MOUSE_BUTTON_LEFT], [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]], 0.3)
-	_bind("aim", [KEY_E], [MOUSE_BUTTON_RIGHT], [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]], 0.3)
+	_bind("aim", [], [MOUSE_BUTTON_RIGHT], [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]], 0.3)
 	_bind("pause", [KEY_ESCAPE], [], [JOY_BUTTON_START])
 	# menus
 	_bind("ui_accept", [], [], [JOY_BUTTON_A])
@@ -275,6 +286,11 @@ func apply_settings(key: String = "*") -> void:
 	player.base_fov = s.get_v("fov")
 	player.mouse_sens = s.get_v("sensitivity")
 	player.invert_y = s.get_v("invert_y")
+	if key == "*" or key == "difficulty":
+		Difficulty.level = s.get_v("difficulty")
+		_load_stats()
+		if ui and ui.current == "home":
+			ui.show_screen("home")
 	player.pad_look_speed = s.get_v("pad_look_speed")
 	player.pad_invert_y = s.get_v("pad_invert_y")
 	player.pad_deadzone = s.get_v("pad_deadzone")
@@ -493,6 +509,35 @@ func _run_gallery() -> void:
 		if t >= st[0]:
 			player.in_aim = st[1]
 			player.in_select = st[2]
+	# then visit the armory (pick up the Breacher) and the alien cache
+	if t >= 10.0 and _gallery_step == 0:
+		_gallery_step = 1
+		player.in_aim = false
+		for r in get_tree().get_nodes_in_group("weapon_rack"):
+			if r.rack_id == "breacher":
+				_gallery_face(r.global_position, 1.3, 0.25)
+	elif t >= 12.0 and _gallery_step == 1:
+		_gallery_step = 2
+		if player.interact_target:
+			player._take(player.interact_target)
+		player.rotation.y += PI * 0.85
+	elif t >= 14.0 and _gallery_step == 2:
+		_gallery_step = 3
+		for c in get_tree().get_nodes_in_group("ammo_cache"):
+			if c.family == "alien":
+				_gallery_face(c.global_position, 4.0, -0.15)
+
+
+func _gallery_face(target: Vector3, dist: float, pitch: float) -> void:
+	var dir := (target - player.global_position)
+	dir.y = 0.0
+	dir = dir.normalized()
+	var at := target - dir * dist
+	at.y = maxf(arena.height_at(at.x, at.z), target.y - 1.45 if target.y > 1.0 else arena.height_at(at.x, at.z)) + 0.05
+	player.global_position = at
+	player.velocity = Vector3.ZERO
+	player.rotation.y = atan2(-dir.x, -dir.z)
+	player.head.rotation.x = pitch
 
 
 ## Screenshot helper for automated visual checks: --shots=<dir>
@@ -527,16 +572,30 @@ func _take_shots() -> void:
 
 # ---------------------------------------------------------------- stats
 
+## Best wave / score are kept per difficulty ("best_wave_hard" ...). Older
+## saves without a suffix count as Normal.
 func _load_stats() -> void:
 	var cf := ConfigFile.new()
+	best_wave = 0
+	best_score = 0
 	if cf.load(STATS_PATH) == OK:
-		best_wave = cf.get_value("stats", "best_wave", 0)
-		best_score = cf.get_value("stats", "best_score", 0)
+		var lv := Difficulty.level
+		var legacy := lv == "normal"
+		best_wave = cf.get_value("stats", "best_wave_" + lv, cf.get_value("stats", "best_wave", 0) if legacy else 0)
+		best_score = cf.get_value("stats", "best_score_" + lv, cf.get_value("stats", "best_score", 0) if legacy else 0)
 
 
 func _save_stats() -> void:
 	var cf := ConfigFile.new()
 	cf.load(STATS_PATH)
-	cf.set_value("stats", "best_wave", best_wave)
-	cf.set_value("stats", "best_score", best_score)
+	cf.set_value("stats", "best_wave_" + Difficulty.level, best_wave)
+	cf.set_value("stats", "best_score_" + Difficulty.level, best_score)
 	cf.save(STATS_PATH)
+
+
+func _on_wave_started(n: int) -> void:
+	WeaponPickup.on_wave_started(get_tree(), n)
+	for c in get_tree().get_nodes_in_group("ammo_cache"):
+		c.on_wave_started(n)
+	if n > 1 and (n - 1) % WeaponPickup.RESTOCK_EVERY == 0:
+		hud.show_banner("WAVE %d" % n, "Armory restocked  ·  ammo caches refilled", 3.5)

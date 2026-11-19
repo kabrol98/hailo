@@ -1,6 +1,10 @@
 extends Control
 ## All HUD + menu drawing, done immediate-mode in _draw().
 
+const Weapons = preload("res://scripts/weapons.gd")
+const WeaponIcons = preload("res://scripts/weapon_icons.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
+
 var player: Node3D
 var waves: Node
 var main: Node
@@ -23,6 +27,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	font = ThemeDB.fallback_font
+	add_child(WeaponIcons.new())
 
 
 func show_banner(t: String, sub := "", dur := 3.0) -> void:
@@ -60,6 +65,7 @@ func _draw() -> void:
 		_draw_damage_dirs()
 	_draw_bars()
 	_draw_weapon()
+	_draw_pickup_prompt()
 	_draw_wave_info()
 	_draw_radar()
 	if banner_t > 0.0:
@@ -109,7 +115,7 @@ func _draw_crosshair() -> void:
 	if player.sprinting:
 		col.a = 0.25
 	var l := 9.0
-	if w.kind == "plasma":
+	if w.family == "alien" or w.mode != "hitscan":
 		draw_arc(c, gap + 4.0, 0, TAU, 28, col, 1.5, true)
 		draw_circle(c, 1.8, col)
 	else:
@@ -179,30 +185,89 @@ func _draw_bars() -> void:
 			draw_rect(Rect2(r.position, Vector2(r.size.x * fill, r.size.y)), C_HEALTH if hf > 0.35 else C_WARN)
 
 
+func _draw_icon(id: String, r: Rect2, col: Color) -> bool:
+	var tex: Texture2D = WeaponIcons.icon(id)
+	if tex == null:
+		return false
+	draw_texture_rect(tex, r, false, col)
+	return true
+
+
+## Ammo readout for a weapon state: magazine "12 / 60" or battery %, plus heat.
+func _ammo_text(w: Dictionary) -> String:
+	if Weapons.uses_mag(w):
+		return "%d / %d" % [w.ammo, w.reserve]
+	return "%d%%" % int(round(w.battery * 100.0))
+
+
 func _draw_weapon() -> void:
 	var w: Dictionary = player.weapons[player.current]
-	var r := Rect2(size.x - 330, size.y - 130, 300, 100)
+	var fam_col := C_ACCENT if w.family == "human" else Color(1.0, 0.45, 0.85)
+	var r := Rect2(size.x - 380, size.y - 168, 350, 138)
 	_panel(r)
-	_text(r.position + Vector2(16, 26), w.name, 18, C_ACCENT)
-	if w.kind == "ballistic":
-		var col := C_TEXT if w.ammo > 8 else C_WARN
-		_text(r.position + Vector2(16, 76), str(w.ammo), 48, col)
-		_text(r.position + Vector2(100, 76), "/ %d" % w.reserve, 22, C_DIM)
+	# current weapon: big icon, name, ammo
+	var icon_r := Rect2(r.position + Vector2(10, 8), Vector2(176, 66))
+	if not _draw_icon(w.id, icon_r, Color(1, 1, 1, 0.95)):
+		_text(icon_r.position + Vector2(0, 40), w.short, 22, C_TEXT)
+	_text(r.position + Vector2(12, 92), w.name, 15, fam_col)
+	if Weapons.uses_mag(w):
+		var col := C_TEXT if w.ammo > int(w.mag) / 4 else C_WARN
+		_text(r.position + Vector2(196, 50), str(w.ammo), 40, col)
+		_text(r.position + Vector2(196 + 26 * str(w.ammo).length(), 50), "/ %d" % w.reserve, 20, C_DIM)
 		if player.reloading > 0.0:
-			_text(r.position + Vector2(170, 26), "RELOADING", 14, C_DIM)
+			_text(r.position + Vector2(196, 74), "RELOADING", 13, C_DIM)
 		elif w.ammo == 0 and w.reserve == 0:
-			_text(r.position + Vector2(170, 26), "NO AMMO", 14, C_WARN)
+			_text(r.position + Vector2(196, 74), "NO AMMO", 13, C_WARN)
 	else:
-		var heat: float = w.heat
-		var bar := Rect2(r.position + Vector2(16, 44), Vector2(200, 18))
+		# battery bar
+		var bar := Rect2(r.position + Vector2(196, 24), Vector2(140, 12))
 		draw_rect(bar, Color(0.2, 0.25, 0.3, 0.6))
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * heat, bar.size.y)), C_SHIELD.lerp(C_WARN, heat))
-		_text(r.position + Vector2(16, 86), "OVERHEATED" if w.overheated > 0.0 else "HEAT", 16, C_WARN if w.overheated > 0.0 else C_DIM)
+		draw_rect(Rect2(bar.position, Vector2(bar.size.x * w.battery, bar.size.y)), fam_col if w.battery > 0.2 else C_WARN)
+		_text(bar.position + Vector2(0, 30), "CHARGE %d%%" % int(round(w.battery * 100.0)), 15, C_TEXT if w.battery > 0.0 else C_WARN)
+	if w.has("heat_per_shot"):
+		var hb := Rect2(r.position + Vector2(196, 64), Vector2(140, 8))
+		draw_rect(hb, Color(0.2, 0.25, 0.3, 0.6))
+		draw_rect(Rect2(hb.position, Vector2(hb.size.x * w.heat, hb.size.y)), C_SHIELD.lerp(C_WARN, w.heat))
+		if w.overheated > 0.0:
+			_text(hb.position + Vector2(0, 22), "OVERHEATED", 13, C_WARN)
+	if w.get("charge", 0.0) > 0.0 and w.has("charge_time"):
+		var cf: float = clampf(w.charge / w.charge_time, 0.0, 1.0)
+		var c := size * 0.5
+		draw_arc(c, 22.0, -PI / 2, -PI / 2 + TAU * cf, 32, fam_col if cf < 1.0 else Color(1, 1, 1), 3.0, true)
 	# grenades
 	for i in player.max_grenades:
 		var gc := C_HEALTH if i < player.grenades else Color(0.3, 0.35, 0.3, 0.6)
-		draw_circle(r.position + Vector2(240 + (i % 2) * 22, 50 + (i / 2) * 22), 7, gc)
-	_text(r.position + Vector2(228, 92), "FRAG", 12, C_DIM)
+		draw_circle(r.position + Vector2(240 + i * 20, 118), 6, gc)
+	_text(r.position + Vector2(196, 123), "FRAG", 11, C_DIM)
+	# carried weapon: smaller, above
+	if player.weapons.size() > 1:
+		var o: Dictionary = player.weapons[1 - player.current]
+		var r2 := Rect2(size.x - 380, size.y - 228, 350, 54)
+		_panel(r2, 0.4)
+		if not _draw_icon(o.id, Rect2(r2.position + Vector2(10, 4), Vector2(122, 46)), Color(1, 1, 1, 0.55)):
+			_text(r2.position + Vector2(10, 32), o.short, 16, C_DIM)
+		_text(r2.position + Vector2(142, 22), o.name, 13, C_DIM)
+		_text(r2.position + Vector2(142, 42), _ammo_text(o), 15, C_DIM if not Weapons.is_empty(o) else C_WARN)
+		var sw := "Y" if Gamepad.active else "Q"
+		_text(r2.position + Vector2(312, 34), sw, 18, C_ACCENT)
+
+
+## "Hold X to pick up ..." when standing at a weapon.
+func _draw_pickup_prompt() -> void:
+	var t = player.interact_target
+	if t == null or not is_instance_valid(t) or t.state.is_empty():
+		return
+	var st: Dictionary = t.state
+	var key := "Hold X" if Gamepad.active else "E"
+	var verb := "Pick up" if player.weapons.size() < 2 else "Swap %s for" % player.weapons[player.current].short
+	var line := "%s  ·  %s %s" % [key, verb, st.name]
+	var y := size.y * 0.74
+	var tw := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
+	var ir := Rect2(size.x * 0.5 - 60, y - 64, 120, 45)
+	_panel(Rect2(size.x * 0.5 - tw * 0.5 - 18, y - 70, tw + 36, 104), 0.5)
+	_draw_icon(st.id, ir, Color(1, 1, 1, 0.9))
+	_ctext(y, line, 20, C_TEXT)
+	_ctext(y + 22, _ammo_text(st) + ("" if st.family == "human" else "  ·  alien weapon, no reload"), 14, C_DIM)
 
 
 func _draw_wave_info() -> void:

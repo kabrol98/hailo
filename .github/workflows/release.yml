@@ -115,6 +115,11 @@ jobs:
           set -o pipefail
           ~/godot/godot --headless -- --padtest 2>&1 | grep -E 'PASS|FAIL|PADTEST|SCRIPT ERROR'
 
+      - name: Weapon system test
+        run: |
+          set -o pipefail
+          ~/godot/godot --headless -- --weapontest 2>&1 | grep -E 'PASS|FAIL|WEAPONTEST|SCRIPT ERROR'
+
       - name: Export macOS app (arm64)
         run: |
           set -euo pipefail

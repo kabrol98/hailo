@@ -13,9 +13,9 @@ const PANEL := Color(0.03, 0.07, 0.04, 0.88)
 ## [action, keyboard / mouse, controller]
 const CONTROLS := [
 	["Move", "WASD / arrows", "Left stick"], ["Look", "Mouse", "Right stick"],
-	["Fire", "Left click", "RT"], ["Aim / zoom", "Right click / E", "LT"],
+	["Fire", "Left click", "RT"], ["Aim / zoom", "Right click", "LT"],
 	["Jump", "Space", "A"], ["Sprint", "Shift (hold)", "Click left stick"],
-	["Crouch", "C / Ctrl", "B"], ["Reload", "R", "X"],
+	["Crouch", "C / Ctrl", "B"], ["Reload", "R", "X (tap)"], ["Pick up weapon", "E", "X (hold)"],
 	["Switch weapon", "Q / wheel / 1-2", "Y or LB"], ["Throw frag", "G", "RB"],
 	["Melee", "F / V", "Click right stick"], ["Flashlight", "T", "D-pad up"],
 	["Pause menu", "Esc", "Menu"], ["Mouse sensitivity", "[  ]", "Settings → Controller"],
@@ -248,7 +248,8 @@ func _build_home() -> Control:
 
 
 func _refresh_home() -> void:
-	best_label.text = "Best: wave %d  ·  %d pts" % [main.best_wave, main.best_score] if main.best_wave > 0 else "No runs yet."
+	var diff := str(settings.get_v("difficulty")).capitalize()
+	best_label.text = ("%s  ·  best: wave %d  ·  %d pts" % [diff, main.best_wave, main.best_score]) if main.best_wave > 0 else "%s  ·  no runs yet." % diff
 	gfx_label.text = "Graphics: %s   ·   Time of day: %s   ·   Recommended for %s: %s" % [
 		str(settings.get_v("preset")).capitalize(), str(settings.get_v("time_of_day")).capitalize(),
 		SettingsScript.chip_name(), SettingsScript.recommended_preset().capitalize()]

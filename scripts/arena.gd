@@ -4,6 +4,9 @@ extends Node3D
 
 const BarrelScript = preload("res://scripts/barrel.gd")
 const PickupScript = preload("res://scripts/pickup.gd")
+const AmmoCache = preload("res://scripts/ammo_cache.gd")
+const WeaponPickup = preload("res://scripts/weapon_pickup.gd")
+const Weapons = preload("res://scripts/weapons.gd")
 const Shaders = preload("res://scripts/shaders.gd")
 const NatureKit = preload("res://scripts/nature_kit.gd")
 
@@ -476,11 +479,13 @@ func _bunker() -> void:
 	_box(Vector3(1.3, 1.3, 1.3), Vector3(-4.8, 0.65, cz - 4.4), mats.crate)
 	_box(Vector3(2.5, 1.1, 1.0), Vector3(5.5, 0.55, cz - 4.8), mats.metal_dark)
 	_box(Vector3(1.0, 1.1, 2.5), Vector3(-3.0, 0.55, cz + 2.5), mats.olive)
-	var cache := PickupScript.new()
-	cache.kind = "supply"
-	cache.persistent = true
+	# human ammo cache by the east wall
+	var cache := AmmoCache.new()
+	cache.family = "human"
 	nav_region.add_child(cache)
-	cache.position = Vector3(0, 0.0, cz - 3.5)
+	cache.position = Vector3(5.6, 0.12, cz + 1.2)
+	cache.rotation.y = PI / 2
+	_armory(cz)
 	_light(Vector3(0, h - 0.3, cz), Color(1.0, 0.85, 0.6), 1.6, 11.0, true)
 	_light(Vector3(0, h - 0.2, cz + 6.6), Color(1.0, 0.7, 0.4), 1.2, 9.0)
 	for s in [-1.0, 1.0]:
@@ -489,6 +494,21 @@ func _bunker() -> void:
 	_deco_mesh(m_sph, Shaders.enemy_skin(Color(0.3, 0.05, 0.05), Color(1.0, 0.1, 0.05), 3.0), Vector3(-6.5, top + 6.1, cz - 4.5), Vector3.ONE * 0.12, Vector3.ZERO, null, false)
 	_deco_mesh(m_cyl, mats.metal, Vector3(5.5, top + 1.0, cz + 3.5), Vector3(1.0, 0.1, 1.0), Vector3(0.6, 0.4, 0))
 	_box(Vector3(1.2, 0.8, 1.2), Vector3(-3.5, top + 0.4, cz + 2.0), mats.metal_dark)
+
+
+## Weapon rack on the bunker's back wall. Taken weapons restock every few waves.
+func _armory(cz: float) -> void:
+	var wall_z := cz - 6.0 + 0.3
+	_box(Vector3(8.0, 1.5, 0.08), Vector3(0, 1.45, wall_z + 0.05), mats.metal_dark, Vector3.ZERO, false)
+	_box(Vector3(8.0, 0.06, 0.25), Vector3(0, 0.72, wall_z + 0.14), mats.metal, Vector3.ZERO, false)
+	_light(Vector3(0, 2.6, wall_z + 0.8), Color(1.0, 0.9, 0.75), 0.9, 5.0)
+	var n := Weapons.RACK.size()
+	for i in n:
+		var p := WeaponPickup.new()
+		p.state = Weapons.new_state(Weapons.RACK[i])
+		p.rack = true
+		nav_region.add_child(p)
+		p.position = Vector3((i - (n - 1) * 0.5) * 1.55, 1.45, wall_z + 0.22)
 
 
 func _tower(base: Vector3, ramp_dir: Vector3) -> void:
@@ -629,6 +649,12 @@ func _crash_site() -> void:
 		if absf(dp.x - base.x) < 4 and absf(dp.z - base.z) < 7:
 			continue
 		_box(ds, dp + Vector3.UP * ds.y * 0.4, mats.metal_dark, Vector3(rng.randf() * 0.4, rng.randf() * TAU, rng.randf() * 0.4))
+	# the Thorn have grown an ammo pod out of the wreck
+	var pod := AmmoCache.new()
+	pod.family = "alien"
+	nav_region.add_child(pod)
+	var pod_pos := base + b * Vector3(-5.5, 0, -3.0)
+	pod.position = Vector3(pod_pos.x, height_at(pod_pos.x, pod_pos.z), pod_pos.z)
 	var fire_pos := base + b * Vector3(0.4, 2.8, -8.0)
 	var p := CPUParticles3D.new()
 	p.amount = 40

@@ -88,11 +88,12 @@ controllers Godot recognises use the same button positions.
 | Move | WASD / arrows | Left stick (analog: tilt gently to walk slowly) |
 | Look | Mouse | Right stick |
 | Fire | Left click | RT |
-| Aim / zoom | Right click (or E) | LT |
+| Aim / zoom | Right click | LT |
 | Jump | Space | A |
 | Sprint | Shift (hold) | Click left stick (stays on until you stop moving forward) |
 | Crouch | C / Ctrl | B |
-| Reload | R | X |
+| Reload | R | X (tap) |
+| Pick up / swap weapon | E | X (hold) |
 | Switch weapon | Q, mouse wheel, 1 / 2 | Y or LB |
 | Throw frag grenade | G | RB |
 | Melee | F / V | Click right stick |
@@ -125,18 +126,20 @@ Trackpad: two-finger click is aim. Tap-to-click works for firing if it's enabled
 
 ## Third-party assets (not committed)
 
-Three free packs by Quaternius, all CC0 (public domain):
+Four free packs by Quaternius, all CC0 (public domain):
 
 | Pack | Used for |
 |---|---|
 | Stylized Nature MegaKit | Trees, ferns, big-leaf plants, bushes, grass clumps, flowers, mushrooms, rocks, pebbles. They sway via the game's foliage shader. |
-| Sci-Fi Essentials Kit | Stalker (QuadShell spider bot), Lancer (EyeDrone, hovers), the VK-9 Carbine and Arc Caster viewmodels, ammo / grenade / health pickups |
+| Sci-Fi Essentials Kit | Stalker (QuadShell spider bot), Lancer (EyeDrone, hovers), the Carbine, Sidearm, Marksman and Arc Caster models, ammo / grenade / health pickups |
 | Animated Mech Pack | Troopers (three mech variants, picked at random) and the Bulwark |
+| Ultimate Gun Pack | The KR-4 Breacher shotgun (only that one model is extracted) |
 
 All the robots use one shared "Thorn" material: the model's own textures plus
 glowing veins that pulse across the metal (colour per enemy type), a rim
 glow, and the hit flash. That's what makes the two robot packs look like one
-faction. Palms and all buildings are still procedural.
+faction. The four alien weapons are procedural (veined, glowing organic
+guns), and so are palms and all buildings.
 
 Assets are **not stored in git**. Instead:
 
@@ -206,27 +209,87 @@ There are no image or model files. Everything is generated at startup:
 - **Shields** recharge 4.5 s after you stop taking damage. **Health** does not
   regenerate. Red med-packs dropped by enemies restore it, and you get +30
   between waves.
-- **VK-9 Carbine**: hitscan rifle. It's weak against shields but strong against
-  flesh, and does 2.5× headshot damage once an enemy's shield is down.
-- **Arc Caster**: plasma projectile weapon with no ammo. It does 1.9× damage to
-  shields but builds heat, and overheating locks it for about 2 s.
-- The usual combo is to strip shields with plasma, then switch and finish with
-  the carbine.
-- The glowing **supply cache** inside the bunker refills carbine ammo and frags.
-  It recharges every 30 s.
+- **Two weapons at a time.** Switch with Y / LB / Q / mouse wheel. The HUD
+  shows icons for the gun in hand (big) and the one on your back (small).
+  You start with the VK-9 Carbine and P-7 Sidearm.
+- **Picking up:** stand at a weapon and hold X (controller) or press E. It
+  replaces the gun in your hand, which drops at your feet. Walking over a
+  dropped copy of a gun you already carry takes its ammo automatically.
+- **Dropped weapons disappear** after 5 waves without being touched. At most
+  30 lie around at once; the oldest go first.
 - Red **fuel barrels** explode when shot.
+
+### Weapons
+
+**Human weapons** come from the **armory rack** on the bunker's back wall.
+Taken guns restock every 5 waves (waves 6, 11, 16...).
+
+| Weapon | Type | Notes |
+|---|---|---|
+| VK-9 Carbine | Automatic rifle, 32-round mag | All-rounder. 2.5× headshots once shields are down |
+| P-7 Sidearm | Semi-auto pistol, 12-round mag | Accurate and quick to reload. Great for headshots |
+| KR-4 Breacher | Pump shotgun, 6 shells, 9 pellets | Devastating up close, damage falls off past ~6 m |
+| LR-9 Marksman | Bolt rifle, 5-round mag, strong zoom | 75 damage per shot. For lancers and headshots |
+| Arc Caster | Energy rifle, battery | Plasma bolts do 1.9× shield damage. Overheats |
+
+**Alien weapons** are carried by every Thorn and dropped when it dies, with a
+partly charged battery (35–85%). They don't reload, and most overheat.
+Plasma does extra damage to shields and less to flesh.
+
+| Weapon | Dropped by | Notes |
+|---|---|---|
+| Thorn Spitter | Stalker | Sidearm. Tap for quick bolts. Hold to charge a seed that curves onto targets and strips most shields in one hit |
+| Thorn Repeater | Trooper | Rapid plasma bolts. Overheats with sustained fire |
+| Spore Launcher | Bulwark | Lobs explosive spores in an arc. Watch the blast radius |
+| Thorn Lance | Lancer | Hold to charge, release for a long-range beam that does 90 damage |
+
+The usual combo is to strip shields with plasma (Arc Caster or any Thorn
+weapon), then switch and finish with a human gun.
+
+### Ammo caches
+
+The single infinite supply cache has been replaced by two limited ones:
+
+- **Human ammo cache** (crate by the bunker's east wall). It refills human
+  magazine reserves, the Arc Caster's battery and frags (to 3).
+- **Alien ammo cache** (a glowing Thorn pod grown out of the crashed craft,
+  south-east). It recharges alien weapon batteries.
+
+Walk into one to use it. Each has a few refills (Easy 4, Normal 3, Hard 2),
+shown as dots above it. A refill is only spent if something actually needed
+topping up. Both refill every 5 waves, alongside the armory restock. Enemies
+still drop ammo, frags and med-packs, and clearing a wave gives +20% reserve
+ammo.
+
+### Difficulty
+
+Settings → Gameplay → Difficulty (shown on the home screen).
+
+| | Easy | Normal | Hard |
+|---|---|---|---|
+| Enemy damage | 60% | 100% | 140% |
+| Enemy health + shields | 80% | 100% | 125% |
+| Enemy accuracy / fire rate | lower / slower | — | higher / faster |
+| Wave size | 75% | 100% | 130% |
+| Cache refills | 4 | 3 | 2 |
+| Drop chance (ammo / frags / health) | higher | — | lower |
+
+Best wave and score are kept per difficulty. Changing difficulty mid-run
+applies to enemies that spawn afterwards.
+
 
 ### The Thorn
 
 | Enemy | Shows up | Behaviour |
 |---|---|---|
-| Stalker | Wave 1 | Fast, unshielded, leaps at you and claws in melee |
+| Stalker | Wave 1 | Fast and unshielded. Fires Spitter bolts on the approach, then leaps in and claws |
 | Trooper | Wave 1 | Shielded, fires plasma bursts, strafes, falls back to recharge when its shield breaks |
-| Bulwark | Wave 3 | Huge shield and health, lobs explosive mortar blobs, ground-slams if you get close |
+| Bulwark | Wave 3 | Huge shield and health, lobs explosive spores, ground-slams if you get close |
 | Lancer | Wave 4 | Long-range sniper. A red targeting beam tracks you, then locks (turns white) just before firing, so move when it locks |
 
-Every 5th wave is a stalker swarm. Waves are endless. Your best wave and score
-are saved.
+Every enemy carries its weapon (in hand, on its back, or slung under the
+drone) and drops it when killed. Every 5th wave is a stalker swarm. Waves are
+endless.
 
 ### The map
 
@@ -263,6 +326,12 @@ scripts/projectile.gd, grenade.gd, barrel.gd, pickup.gd
 scripts/effects.gd   particles, tracers, explosions (with area damage)
 scripts/sfx.gd       synthesized sound effects
 scripts/gamepad.gd   controller state: active device, rumble, prompts, stick shaping
+scripts/weapons.gd   weapon registry: stats, fire modes, models, ammo state
+scripts/weapon_pickup.gd  dropped / racked weapons, expiry and restock
+scripts/weapon_icons.gd   renders HUD weapon silhouettes from the models
+scripts/ammo_cache.gd     human + alien ammo caches with limited refills
+scripts/difficulty.gd     Easy / Normal / Hard multipliers
+tests/weapontest.gd  weapon-system test (godot --headless -- --weapontest)
 tests/padtest.gd     simulated-controller test (godot --headless -- --padtest)
 ```
 
@@ -322,6 +391,16 @@ N), `--shot-times=a,b,c` (when to take screenshots) and `--debug` (prints
 straggler enemy state). `--gallery` lines up one of each enemy in front of a
 frozen player and steps through hip fire and aiming on both guns. Add
 `--live` and the enemies attack, then the bot fights back.
+
+Weapon test: `godot --headless -- --weapontest` checks:
+- armory pick-up and swapping, plus ammo scavenging
+- enemy weapon drops
+- alien weapons: battery, charged shot, overheat
+- ground-weapon expiry and the armory restock
+- both caches: limited refills and the 5-wave reset
+- difficulty scaling
+
+Add `--difficulty=easy|normal|hard` to any run.
 
 Controller test: `godot --headless -- --padtest` feeds simulated Xbox
 controller input into the real game. It checks menu navigation, look and

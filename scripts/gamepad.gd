@@ -18,14 +18,14 @@ static var rumble_enabled := true
 ## Prompt names for the default bindings (Xbox layout).
 const PAD_LABELS := {
 	"move": "Left stick", "look": "Right stick", "fire": "RT", "aim": "LT",
-	"jump": "A", "sprint": "LS click", "crouch": "B", "reload": "X",
+	"jump": "A", "sprint": "LS click", "crouch": "B", "reload": "X", "interact": "Hold X",
 	"switch_weapon": "Y / LB", "grenade": "RB", "melee": "RS click",
 	"flashlight": "D-pad up", "pause": "Menu", "accept": "A", "back": "B",
 	"tabs": "LB / RB",
 }
 const KEY_LABELS := {
 	"move": "WASD", "look": "Mouse", "fire": "Left click", "aim": "Right click",
-	"jump": "Space", "sprint": "Shift", "crouch": "C", "reload": "R",
+	"jump": "Space", "sprint": "Shift", "crouch": "C", "reload": "R", "interact": "E",
 	"switch_weapon": "Q", "grenade": "G", "melee": "F", "flashlight": "T",
 	"pause": "Esc", "accept": "Enter", "back": "Esc", "tabs": "click",
 }

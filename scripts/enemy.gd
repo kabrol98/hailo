@@ -13,6 +13,12 @@ const ProjectileScript = preload("res://scripts/projectile.gd")
 const PickupScript = preload("res://scripts/pickup.gd")
 const Shaders = preload("res://scripts/shaders.gd")
 const ModelKit = preload("res://scripts/model_kit.gd")
+const Weapons = preload("res://scripts/weapons.gd")
+const WeaponPickup = preload("res://scripts/weapon_pickup.gd")
+const Difficulty = preload("res://scripts/difficulty.gd")
+
+## Bone each robot holds its weapon with (asset-pack models).
+const HOLD_BONE := {"George": "LowerArm.R", "Mike": "LowerArm.R", "Stan": "LowerArm.R"}
 
 const GRAVITY := 16.0
 
@@ -84,6 +90,10 @@ var anim: AnimationPlayer
 var anim_lock := 0.0
 var _cur_anim := ""
 var _hover := 0.0
+## The alien weapon this enemy carries (and drops).
+var weapon_id := ""
+var gun: Node3D
+var gun_muzzle: Node3D
 
 
 static func _ensure_meshes() -> void:
@@ -154,6 +164,10 @@ func setup(t: String, w: int) -> void:
 			score_value = 250
 			min_range = 22.0
 			max_range = 48.0
+	max_health *= Difficulty.v("hp")
+	max_shield *= Difficulty.v("hp")
+	dmg_mult *= Difficulty.v("dmg")
+	weapon_id = Weapons.ENEMY_WEAPON.get(type, "")
 	health = max_health
 	shield = max_shield
 	fire_cd = randf_range(1.0, 2.5)
@@ -186,6 +200,7 @@ func _ready() -> void:
 	agent.path_max_distance = 4.0
 	add_child(agent)
 	_build_visual()
+	_arm()
 	goal = global_position
 	if type == "bulwark":
 		Sfx.play_at(self, "roar", global_position, 6.0, 0.9)
@@ -343,6 +358,60 @@ func _build_visual() -> void:
 		add_child(shell)
 
 
+## Gives the enemy its weapon model: in the robot's hand (or slung under its
+## body) for asset-pack models, at the arm for the procedural ones.
+func _arm() -> void:
+	if weapon_id == "":
+		return
+	gun = Weapons.model(weapon_id)
+	gun_muzzle = Node3D.new()
+	gun_muzzle.position = gun.get_meta("muzzle")
+	gun.add_child(gun_muzzle)
+	var size: float = {"stalker": 2.2, "trooper": 1.9, "bulwark": 2.4, "lancer": 1.9}.get(type, 1.8)
+	if model.is_empty():
+		var at: Vector3 = {"stalker": Vector3(0, 0.95, -0.55), "trooper": Vector3(0.38, 1.05, -0.3),
+			"bulwark": Vector3(0.95, 1.0, -0.4), "lancer": Vector3(0.3, 1.4, -0.3)}.get(type, Vector3(0.3, 1.1, -0.3))
+		gun.position = at
+		gun.scale = Vector3.ONE * size
+		visual.add_child(gun)
+		return
+	var sk: Skeleton3D = null
+	var found: Array = (model.root as Node).find_children("*", "Skeleton3D", true, false)
+	if not found.is_empty():
+		sk = found[0]
+	var mech := ""
+	for k in HOLD_BONE:
+		if (model.root as Node).find_child(k, true, false) != null:
+			mech = k
+	var bone: String = HOLD_BONE.get(mech, "Body")
+	if sk == null or sk.find_bone(bone) < 0:
+		gun.position = Vector3(0.3, 1.2, -0.4)
+		gun.scale = Vector3.ONE * size
+		visual.add_child(gun)
+		return
+	var att := BoneAttachment3D.new()
+	att.bone_name = bone
+	sk.add_child(att)
+	att.add_child(gun)
+	gun.visible = false
+	_fit_gun.call_deferred(att, size)
+
+
+## Once the bone has a pose: undo the skeleton's scale and point the gun
+## the way the enemy faces.
+func _fit_gun(att: Node3D, size: float) -> void:
+	await get_tree().process_frame
+	if not is_instance_valid(att) or not is_instance_valid(gun):
+		return
+	var pb := att.global_transform.basis
+	var want := global_transform.basis.scaled(Vector3.ONE * size)
+	gun.transform.basis = pb.inverse() * want
+	# stalker: turret on its back; lancer: slung under the eye; others: held out front
+	var offset: Vector3 = {"stalker": Vector3(0, 0.55, -0.2), "lancer": Vector3(0, -0.5, -0.05)}.get(type, Vector3(0.1, -0.05, -0.42))
+	gun.position = pb.inverse() * (global_transform.basis * offset)
+	gun.visible = true
+
+
 func _use_kit_model(glow_col: Color) -> void:
 	for c in visual.get_children():
 		c.free()
@@ -481,7 +550,8 @@ func _die(_from: Vector3) -> void:
 
 
 func _drop() -> void:
-	var r := randf()
+	_drop_weapon()
+	var r := randf() / Difficulty.v("drops")
 	var k := ""
 	var bonus := 0.15 if type == "bulwark" else 0.0
 	if r < 0.32 + bonus:
@@ -496,6 +566,22 @@ func _drop() -> void:
 	p.kind = k
 	get_parent().add_child(p)
 	p.global_position = global_position + Vector3.UP * 0.1
+
+
+## Every Thorn drops its weapon, partly charged.
+func _drop_weapon() -> void:
+	if weapon_id == "":
+		return
+	var at := global_position + Vector3.UP * 1.0
+	if gun != null and is_instance_valid(gun):
+		if gun.is_inside_tree():
+			at = gun.global_position
+		gun.visible = false
+	var p := WeaponPickup.new()
+	p.state = Weapons.new_state(weapon_id, randf_range(0.35, 0.85))
+	get_parent().add_child(p)
+	p.global_position = at
+	p.drop_velocity = Vector3(randf_range(-1.5, 1.5), 2.5, randf_range(-1.5, 1.5))
 
 
 # ---------------------------------------------------------------- AI
@@ -673,6 +759,12 @@ func _separation() -> Vector3:
 func _combat(delta: float, dist: float) -> void:
 	match type:
 		"stalker":
+			# Spitter shots on the approach, then the pounce
+			if los and dist > 6.0 and dist < 26.0 and not leaping:
+				fire_cd -= delta
+				if fire_cd <= 0.0:
+					fire_cd = randf_range(1.1, 2.0) * Difficulty.v("fire_delay")
+					_shoot_bolt(Color(1.0, 0.7, 0.15), 5.0, 48.0)
 			if dist < 1.8 and melee_cd <= 0.0:
 				melee_cd = 1.0
 				_anim_action("melee", 0.35)
@@ -699,7 +791,7 @@ func _combat(delta: float, dist: float) -> void:
 			if los and dist < max_range + 8.0 and state != "retreat":
 				fire_cd -= delta
 				if fire_cd <= 0.0:
-					fire_cd = randf_range(1.5, 2.5) / minf(dmg_mult, 1.3)
+					fire_cd = randf_range(1.5, 2.5) / minf(dmg_mult, 1.3) * Difficulty.v("fire_delay")
 					burst_left = 3 if wave < 6 else 4
 					burst_cd = 0.0
 		"bulwark":
@@ -717,7 +809,7 @@ func _combat(delta: float, dist: float) -> void:
 			if los and dist > 6.0 and dist < 42.0:
 				fire_cd -= delta
 				if fire_cd <= 0.0:
-					fire_cd = randf_range(2.6, 3.6)
+					fire_cd = randf_range(2.6, 3.6) * Difficulty.v("fire_delay")
 					_lob_mortar()
 		"lancer":
 			if charge_t > 0.0:
@@ -733,7 +825,7 @@ func _combat(delta: float, dist: float) -> void:
 			if los and dist < max_range + 10.0:
 				fire_cd -= delta
 				if fire_cd <= 0.0:
-					fire_cd = randf_range(4.0, 5.5)
+					fire_cd = randf_range(4.0, 5.5) * Difficulty.v("fire_delay")
 					charge_t = 1.4
 					_anim_action("charge", 1.4)
 					beam_aim = player.global_position + Vector3.UP * 1.2
@@ -742,25 +834,26 @@ func _combat(delta: float, dist: float) -> void:
 
 
 func _muzzle() -> Vector3:
+	if gun_muzzle != null and is_instance_valid(gun_muzzle) and gun.visible:
+		return gun_muzzle.global_position
 	if not model.is_empty():
 		return global_transform * Vector3(0.3, 1.3, -0.65)
 	return global_transform * Vector3(0.38, 1.05, -0.7)
 
 
-func _shoot_bolt() -> void:
+func _shoot_bolt(col := Color(1.0, 0.2, 0.75), damage := 6.5, spd := 36.0) -> void:
 	var from := _muzzle()
 	var target: Vector3 = player.global_position + Vector3.UP * 1.1
-	var spd := 36.0
 	var t := from.distance_to(target) / spd
 	target += player.velocity * t * 0.55
 	var dir := (target - from).normalized()
-	var spread := 0.035 + from.distance_to(target) * 0.0006
+	var spread := (0.035 + from.distance_to(target) * 0.0006) * Difficulty.v("spread")
 	dir = (dir + Vector3(randf_range(-spread, spread), randf_range(-spread, spread) * 0.6, randf_range(-spread, spread))).normalized()
 	var p := ProjectileScript.new()
 	p.vel = dir * spd
-	p.damage = 6.5 * dmg_mult
+	p.damage = damage * dmg_mult
 	p.kind = "plasma"
-	p.color = Color(1.0, 0.2, 0.75)
+	p.color = col
 	p.size = 0.09
 	p.from_player = false
 	p.shooter = self
@@ -772,7 +865,7 @@ func _shoot_bolt() -> void:
 
 
 func _lob_mortar() -> void:
-	var from := global_transform * Vector3(0, 2.6, 0.4)
+	var from := _muzzle() if gun_muzzle != null and gun.visible else global_transform * Vector3(0, 2.6, 0.4)
 	var target: Vector3 = player.global_position + player.velocity * 0.6
 	var g := 14.0
 	var tof := clampf(from.distance_to(target) / 14.0, 0.9, 2.4)

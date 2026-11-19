@@ -16,6 +16,9 @@ var size := 0.1
 var stretch := 3.0
 var with_light := false
 var source_pos := Vector3.ZERO
+## Optional: steer toward this node (charged Spitter seed). `homing` = turn rate.
+var homing_target: Node3D = null
+var homing := 0.0
 
 
 func _ready() -> void:
@@ -48,6 +51,10 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	vel.y -= grav * delta
+	if homing > 0.0 and homing_target != null and is_instance_valid(homing_target):
+		var aim: Vector3 = homing_target.global_position + Vector3.UP * float(homing_target.get("head_y") if homing_target.get("head_y") != null else 1.0) * 0.7
+		var spd := vel.length()
+		vel = vel.normalized().slerp((aim - global_position).normalized(), clampf(homing * delta, 0.0, 1.0)) * spd
 	var from := global_position
 	var to := from + vel * delta
 	var mask := (1 | 4) if from_player else (1 | 2)

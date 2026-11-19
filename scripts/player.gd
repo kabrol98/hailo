@@ -11,6 +11,8 @@ const GrenadeScript = preload("res://scripts/grenade.gd")
 const Decals = preload("res://scripts/decals.gd")
 const ModelKit = preload("res://scripts/model_kit.gd")
 const Gamepad = preload("res://scripts/gamepad.gd")
+const Weapons = preload("res://scripts/weapons.gd")
+const WeaponPickup = preload("res://scripts/weapon_pickup.gd")
 
 const WALK_SPEED := 6.2
 const SPRINT_SPEED := 9.6
@@ -66,7 +68,15 @@ var muzzle_light: OmniLight3D
 var collider: CollisionShape3D
 var capsule: CapsuleShape3D
 
+## The two carried weapons (state dicts, see weapons.gd); `current` is the one in hand.
 var weapons: Array = []
+var _vm_nodes := {}            # weapon id -> {"node", "muzzle"} viewmodels, built on demand
+## Nearest weapon on the ground / rack within reach, or null.
+var interact_target: Node = null
+var in_interact := false
+var _x_hold := 0.0
+var _x_used := false
+var _interact_prev := false
 var current := 0
 var fire_cd := 0.0
 var reloading := 0.0
@@ -158,16 +168,12 @@ func _ready() -> void:
 	flashlight.position = Vector3(0.25, -0.15, -0.2)
 	flashlight.visible = false
 	camera.add_child(flashlight)
-	weapons = [
-		{"name": "VK-9 CARBINE", "kind": "ballistic", "auto": true, "rate": 0.095, "damage": 13.0,
-			"mag": 32, "ammo": 32, "reserve": 192, "max_reserve": 320, "reload": 1.8,
-			"spread": 0.024, "aim_spread": 0.006, "recoil": 0.011, "zoom": 52.0},
-		{"name": "ARC CASTER", "kind": "plasma", "auto": true, "rate": 0.15, "damage": 19.0,
-			"heat": 0.0, "heat_per_shot": 0.085, "cool_rate": 0.42, "overheated": 0.0, "speed": 75.0,
-			"spread": 0.014, "aim_spread": 0.005, "recoil": 0.007, "zoom": 60.0},
-	]
-	_build_weapon_models()
+	heat_mat = StandardMaterial3D.new()
+	heat_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	heat_mat.albedo_color = Color(0.3, 2.0, 3.0)
+	weapons = [Weapons.new_state(Weapons.START[0]), Weapons.new_state(Weapons.START[1])]
 	_build_muzzle_flash()
+	_refresh_viewmodels()
 	_select_weapon(0, true)
 
 
@@ -202,76 +208,48 @@ func _bm(s: Vector3) -> BoxMesh:
 	return b
 
 
-func _build_weapon_models() -> void:
-	var gun := _mat(Color(0.17, 0.18, 0.19), 0.4, 0.7)
-	var grip := _mat(Color(0.07, 0.07, 0.07), 0.85)
-	var olive := _mat(Color(0.25, 0.28, 0.17), 0.7, 0.1)
-	var orange := Effects.glow_mat(Color(1.0, 0.55, 0.15), 2.0)
-	# --- VK-9 carbine
-	var c := Node3D.new()
-	_vm(c, _bm(Vector3(0.07, 0.09, 0.42)), gun, Vector3(0, 0, -0.05))
-	_vm(c, _bm(Vector3(0.062, 0.07, 0.3)), olive, Vector3(0, -0.005, -0.38))
-	var barrel := CylinderMesh.new()
-	barrel.top_radius = 0.015
-	barrel.bottom_radius = 0.015
-	barrel.height = 0.22
-	_vm(c, barrel, gun, Vector3(0, 0.01, -0.62), Vector3(PI / 2, 0, 0))
-	_vm(c, _bm(Vector3(0.045, 0.17, 0.07)), grip, Vector3(0, -0.12, -0.12), Vector3(0.25, 0, 0))
-	_vm(c, _bm(Vector3(0.042, 0.12, 0.05)), grip, Vector3(0, -0.1, 0.09), Vector3(-0.3, 0, 0))
-	_vm(c, _bm(Vector3(0.05, 0.08, 0.22)), olive, Vector3(0, -0.02, 0.25))
-	_vm(c, _bm(Vector3(0.035, 0.045, 0.1)), grip, Vector3(0, 0.068, -0.06))
-	_vm(c, _bm(Vector3(0.012, 0.012, 0.012)), Effects.glow_mat(Color(1.0, 0.2, 0.1), 4.0), Vector3(0, 0.095, -0.1))
-	_vm(c, _bm(Vector3(0.002, 0.025, 0.08)), orange, Vector3(-0.037, 0.01, 0.0))
-	var m0 := Node3D.new()
-	m0.position = Vector3(0, 0.01, -0.74)
-	c.add_child(m0)
-	# --- Arc caster
-	var a := Node3D.new()
-	var body := CapsuleMesh.new()
-	body.radius = 0.065
-	body.height = 0.42
-	_vm(a, body, _mat(Color(0.82, 0.84, 0.8), 0.3, 0.3), Vector3(0, 0, -0.14), Vector3(PI / 2, 0, 0))
-	for s in [-1.0, 1.0]:
-		_vm(a, _bm(Vector3(0.016, 0.016, 0.22)), gun, Vector3(0.045 * s, 0.0, -0.42))
-	heat_mat = StandardMaterial3D.new()
-	heat_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	heat_mat.albedo_color = Color(0.3, 2.0, 3.0)
-	for z in [-0.04, -0.14, -0.24]:
-		var tor := TorusMesh.new()
-		tor.inner_radius = 0.055
-		tor.outer_radius = 0.078
-		_vm(a, tor, heat_mat, Vector3(0, 0, z), Vector3(PI / 2, 0, 0))
-	_vm(a, _bm(Vector3(0.042, 0.12, 0.05)), grip, Vector3(0, -0.1, 0.03), Vector3(-0.3, 0, 0))
-	_vm(a, _bm(Vector3(0.03, 0.03, 0.08)), heat_mat, Vector3(0, 0.07, -0.1))
-	var m1 := Node3D.new()
-	m1.position = Vector3(0, 0, -0.5)
-	a.add_child(m1)
-	if ModelKit.enabled:
-		_use_kit_guns(c, a, m0, m1)
-	viewmodel.add_child(c)
-	viewmodel.add_child(a)
-	weapon_models = [c, a]
-	muzzles = [m0, m1]
+func _viewmodel_for(id: String) -> Dictionary:
+	if _vm_nodes.has(id):
+		return _vm_nodes[id]
+	var n := Weapons.model(id)
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mz := Node3D.new()
+	mz.position = n.get_meta("muzzle")
+	n.add_child(mz)
+	if id == "arc_caster":
+		# heat cells along the barrel: blue when cool, orange near overheat
+		for s in [-1.0, 1.0]:
+			_vm(n, _bm(Vector3(0.004, 0.012, 0.16)), heat_mat, Vector3(0.024 * s, -0.035, -0.2))
+	n.visible = false
+	viewmodel.add_child(n)
+	_vm_nodes[id] = {"node": n, "muzzle": mz}
+	return _vm_nodes[id]
 
 
-## Swaps the procedural gun bodies for the textured asset-pack guns.
-func _use_kit_guns(c: Node3D, a: Node3D, m0: Node3D, m1: Node3D) -> void:
-	for n in [c, a]:
-		for ch in (n as Node3D).get_children():
-			if ch != m0 and ch != m1:
-				ch.free()
-	# sight line sits just under the camera when aiming (AIM_POS)
-	var rifle := ModelKit.gun("Gun_Rifle", 0.68)
-	rifle.position = Vector3(0, -0.115, -0.02)
-	c.add_child(rifle)
-	m0.position = rifle.position + ModelKit.gun_muzzle(rifle)
-	var caster := ModelKit.gun("Gun_Revolver", 0.42)
-	caster.position = Vector3(0, -0.09, -0.04)
-	a.add_child(caster)
-	m1.position = caster.position + ModelKit.gun_muzzle(caster)
-	# heat cells along the barrel: blue when cool, orange near overheat
-	for s in [-1.0, 1.0]:
-		_vm(a, _bm(Vector3(0.004, 0.012, 0.16)), heat_mat, Vector3(0.024 * s, -0.035, -0.2))
+## Rebuilds the slot -> viewmodel lists after picking up or dropping a weapon.
+func _refresh_viewmodels() -> void:
+	weapon_models.clear()
+	muzzles.clear()
+	for vm in _vm_nodes.values():
+		(vm.node as Node3D).visible = false
+	for st in weapons:
+		var vm := _viewmodel_for(st.id)
+		weapon_models.append(vm.node)
+		muzzles.append(vm.muzzle)
+	current = clampi(current, 0, weapons.size() - 1)
+	(weapon_models[current] as Node3D).visible = true
+	_attach_flash()
+
+
+func _attach_flash() -> void:
+	if flash_mesh == null or muzzles.is_empty():
+		return
+	var mz: Node3D = muzzles[current]
+	if flash_mesh.get_parent() != mz:
+		if flash_mesh.get_parent():
+			flash_mesh.get_parent().remove_child(flash_mesh)
+		mz.add_child(flash_mesh)
 
 
 func _build_muzzle_flash() -> void:
@@ -291,7 +269,6 @@ func _build_muzzle_flash() -> void:
 	flash_mesh.material_override = m
 	flash_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	flash_mesh.visible = false
-	(muzzles[0] as Node3D).add_child(flash_mesh)
 
 
 func set_flashlight(on: bool) -> void:
@@ -299,12 +276,16 @@ func set_flashlight(on: bool) -> void:
 
 
 func _select_weapon(i: int, instant := false) -> void:
-	if i == current and not instant:
+	if i >= weapons.size() or (i == current and not instant):
 		return
+	if current >= 0 and current < weapons.size():
+		weapons[current].charge = 0.0
+		weapons[current].charging = false
 	current = i
 	reloading = 0.0
 	for j in weapon_models.size():
 		(weapon_models[j] as Node3D).visible = j == i
+	_attach_flash()
 	if not instant:
 		switching = 0.45
 		Sfx.play_ui(self, "switch", -4.0)
@@ -427,6 +408,24 @@ func _read_input() -> void:
 	else:
 		in_aim = Input.is_action_pressed("aim")
 	in_reload = Input.is_action_just_pressed("reload")
+	# edge-detect by hand: a press between physics frames still counts once
+	var e_down := Input.is_action_pressed("interact")
+	in_interact = e_down and not _interact_prev
+	_interact_prev = e_down
+	# controller X: tap = reload, hold = pick up the weapon you're standing at
+	if Input.is_action_pressed("pad_x"):
+		if Input.is_action_just_pressed("pad_x") and interact_target == null:
+			in_reload = true
+			_x_used = true
+		_x_hold += get_physics_process_delta_time()
+		if _x_hold >= 0.35 and not _x_used and interact_target != null:
+			in_interact = true
+			_x_used = true
+	elif _x_hold > 0.0:
+		if not _x_used:
+			in_reload = true
+		_x_hold = 0.0
+		_x_used = false
 	in_switch = Input.is_action_just_pressed("switch_weapon") or _wheel_switch
 	_wheel_switch = false
 	in_select = -1
@@ -486,6 +485,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_update_crouch(delta)
 	_update_shield(delta)
+	_update_interact()
 	_update_weapons(delta)
 	_update_viewmodel(delta)
 	_update_aim_probe()
@@ -533,24 +533,17 @@ func _update_feedback(delta: float) -> void:
 # ---------------------------------------------------------------- weapons
 
 func _update_weapons(delta: float) -> void:
-	var w: Dictionary = weapons[current]
 	fire_cd -= delta
 	grenade_cd -= delta
 	melee_cd -= delta
-	# arc caster cooling (both weapons cool even when holstered)
-	var ac: Dictionary = weapons[1]
-	if ac.overheated > 0.0:
-		ac.overheated -= delta
-		ac.heat = maxf(ac.heat - delta * 0.45, 0.0)
-		if ac.overheated <= 0.0:
-			ac.heat = 0.0
-	elif fire_cd < -0.1 or current != 1:
-		ac.heat = maxf(ac.heat - ac.cool_rate * delta, 0.0)
-	var hc: float = ac.heat
-	heat_mat.albedo_color = Color(0.3, 2.0, 3.0).lerp(Color(3.5, 0.6, 0.1), hc)
+	for i in weapons.size():
+		_cool(weapons[i], delta, i == current)
+	var w: Dictionary = weapons[current]
+	if w.id == "arc_caster":
+		heat_mat.albedo_color = Color(0.3, 2.0, 3.0).lerp(Color(3.5, 0.6, 0.1), w.heat)
 	if reloading > 0.0:
 		reloading -= delta
-		if reloading <= 0.0:
+		if reloading <= 0.0 and Weapons.uses_mag(w):
 			var need: int = w.mag - w.ammo
 			var take: int = mini(need, w.reserve)
 			w.ammo += take
@@ -562,21 +555,90 @@ func _update_weapons(delta: float) -> void:
 	camera.fov = lerpf(camera.fov, target_fov, 14.0 * delta)
 	if in_select >= 0:
 		_select_weapon(in_select)
-	elif in_switch:
+	elif in_switch and weapons.size() > 1:
 		_select_weapon(1 - current)
+	if in_interact and interact_target != null and is_instance_valid(interact_target):
+		_take(interact_target)
 	w = weapons[current]
-	if in_reload and w.kind == "ballistic" and reloading <= 0.0 and w.ammo < w.mag and w.reserve > 0:
+	if in_reload and Weapons.uses_mag(w) and reloading <= 0.0 and w.ammo < w.mag and w.reserve > 0:
 		_start_reload()
 	if in_grenade and grenades > 0 and grenade_cd <= 0.0 and switching <= 0.0:
 		_throw_grenade()
 	if in_melee and melee_cd <= 0.0:
 		_melee()
-	var want: bool = in_fire if w.auto else in_fire_just
-	if want and fire_cd <= 0.0 and reloading <= 0.0 and switching <= 0.0 and melee_cd < 0.35:
-		if w.kind == "ballistic":
-			_fire_carbine(w)
-		else:
-			_fire_arc(w)
+	var ready := fire_cd <= 0.0 and reloading <= 0.0 and switching <= 0.0 and melee_cd < 0.35
+	match w.mode:
+		"charge_bolt":
+			# tap: quick bolt; keep holding: charge a heavy shot, fired on release
+			if in_fire_just and ready and _has_shot(w):
+				_fire(w)
+				w.charging = true
+				w.charge = 0.0
+			elif in_fire and w.get("charging", false):
+				var before: float = w.charge
+				w.charge += delta
+				if before < 0.2 and w.charge >= 0.2:
+					Sfx.play_ui(self, "shield_charge", -8.0, 1.6)
+			elif w.get("charging", false):
+				if w.charge >= w.charge_time and w.overheated <= 0.0 and _has_shot(w):
+					_fire(w, true)
+				w.charging = false
+				w.charge = 0.0
+			elif in_fire_just and not _has_shot(w):
+				_dry_fire(w)
+		"beam":
+			# hold to charge, release to fire; releasing early cancels
+			if in_fire and ready and _has_shot(w):
+				if w.charge <= 0.0:
+					Sfx.play_ui(self, "lancer_charge", -6.0, 1.4)
+				w.charge += delta
+			elif w.charge > 0.0:
+				if w.charge >= w.charge_time:
+					_fire(w)
+				w.charge = 0.0
+			elif in_fire_just and not _has_shot(w):
+				_dry_fire(w)
+		_:
+			var want: bool = in_fire if w.auto else in_fire_just
+			if want and ready:
+				if _has_shot(w):
+					_fire(w)
+				elif in_fire_just or w.auto:
+					_dry_fire(w)
+
+
+func _cool(st: Dictionary, delta: float, in_hand: bool) -> void:
+	if not st.has("heat_per_shot"):
+		return
+	if st.overheated > 0.0:
+		st.overheated -= delta
+		st.heat = maxf(st.heat - delta * 0.45, 0.0)
+		if st.overheated <= 0.0:
+			st.heat = 0.0
+	elif fire_cd < -0.1 or not in_hand:
+		st.heat = maxf(st.heat - float(st.cool_rate) * delta, 0.0)
+
+
+func _has_shot(w: Dictionary) -> bool:
+	if w.overheated > 0.0:
+		return false
+	if Weapons.uses_mag(w):
+		return w.ammo > 0
+	return w.battery > 0.0005
+
+
+func _dry_fire(w: Dictionary) -> void:
+	fire_cd = 0.25
+	if w.overheated > 0.0:
+		return
+	Sfx.play_ui(self, "empty", -2.0)
+	if Weapons.uses_mag(w):
+		if w.reserve > 0:
+			_start_reload()
+	elif w.family == "alien":
+		notify("%s IS SPENT - swap it for another weapon" % w.short)
+	else:
+		notify("%s BATTERY EMPTY - recharge at a human cache" % w.short)
 
 
 func _start_reload() -> void:
@@ -606,71 +668,112 @@ func _current_spread(w: Dictionary) -> float:
 	return s
 
 
-func _fire_carbine(w: Dictionary) -> void:
-	if w.ammo <= 0:
-		fire_cd = 0.25
-		Sfx.play_ui(self, "empty", -2.0)
-		if w.reserve > 0:
-			_start_reload()
-		return
-	w.ammo -= 1
+## Fires one shot of the weapon in hand. `charged` = the Spitter's held shot.
+func _fire(w: Dictionary, charged := false) -> void:
 	fire_cd = w.rate
-	Gamepad.rumble(0.18, 0.0, 0.05)
-	var hit := _aim_ray(_current_spread(w))
-	var end: Vector3 = hit.end
-	if hit.has("collider"):
-		var c: Object = hit.collider
-		if c != null and c.has_method("take_damage"):
-			register_hit(c.take_damage(w.damage, "ballistic", global_position, end))
-		if not (c is Node and (c as Node).is_in_group("enemy")):
-			Decals.bullet_hole(self, end, hit.normal)
-		Effects.impact(self, end, hit.normal, Color(1.0, 0.7, 0.3))
-	var mz: Vector3 = (muzzles[0] as Node3D).global_position
-	if randf() < 0.6:
-		Effects.tracer(self, mz, end)
-	_kick(w.recoil)
-	muzzle_light.light_color = Color(1.0, 0.75, 0.4)
-	muzzle_light.light_energy = 3.0
-	flash_t = 0.04
-	flash_mesh.visible = true
-	flash_mesh.rotation.z = randf() * TAU
-	Sfx.play_ui(self, "rifle", -5.0)
-	if w.ammo == 0 and w.reserve > 0:
+	# spend ammo / charge / heat
+	if Weapons.uses_mag(w):
+		w.ammo -= 1
+	else:
+		var cost: float = float(w.get("charge_drain", w.drain)) if charged else float(w.drain)
+		w.battery = maxf(w.battery - cost, 0.0)
+	if w.has("heat_per_shot"):
+		w.heat += float(w.get("charge_heat", w.heat_per_shot)) if charged else float(w.heat_per_shot)
+		if w.heat >= 1.0:
+			w.heat = 1.0
+			w.overheated = w.overheat_time
+			Sfx.play_ui(self, "overheat", -2.0)
+			notify("%s OVERHEATED" % w.short)
+	var mz: Vector3 = (muzzles[current] as Node3D).global_position
+	match w.mode:
+		"hitscan":
+			var pellets := int(w.get("pellets", 1))
+			for i in pellets:
+				var hit := _aim_ray(_current_spread(w))
+				var end: Vector3 = hit.end
+				if hit.has("collider"):
+					var dmg: float = w.damage
+					if w.has("falloff"):
+						var d: float = (hit.from as Vector3).distance_to(end)
+						dmg *= clampf(1.0 - (d - w.falloff.x) / (w.falloff.y - w.falloff.x), 0.15, 1.0)
+					var c: Object = hit.collider
+					if c != null and c.has_method("take_damage"):
+						register_hit(c.take_damage(dmg, "ballistic", global_position, end))
+					if not (c is Node and (c as Node).is_in_group("enemy")):
+						Decals.bullet_hole(self, end, hit.normal)
+					if i < 4:
+						Effects.impact(self, end, hit.normal, Color(1.0, 0.7, 0.3))
+				if randf() < float(w.get("tracer", 0.5)):
+					Effects.tracer(self, mz, end)
+			flash_t = 0.04
+			flash_mesh.visible = true
+			flash_mesh.rotation.z = randf() * TAU
+			Gamepad.rumble(0.18 + 0.1 * pellets / 9.0, 0.25 if pellets > 1 else 0.0, 0.06)
+		"bolt", "charge_bolt":
+			var hit := _aim_ray(_current_spread(w) * (0.3 if charged else 1.0))
+			var end: Vector3 = hit.end
+			var dir := (end - mz).normalized()
+			if mz.distance_to(end) < 1.0:
+				dir = -camera.global_transform.basis.z
+			var p := ProjectileScript.new()
+			p.vel = dir * float(w.speed) * (0.8 if charged else 1.0)
+			p.damage = float(w.charge_damage) if charged else float(w.damage)
+			p.kind = w.kind
+			p.color = w.color
+			p.size = 0.16 if charged else 0.08
+			p.with_light = charged
+			p.from_player = true
+			p.shooter = self
+			p.source_pos = global_position
+			if charged:
+				# the seed curves onto whatever you're aiming near
+				var t := _assist_target()
+				if t.is_empty() and aim_enemy and hit.has("collider"):
+					t = {"enemy": hit.collider}
+				if not t.is_empty():
+					p.homing_target = t.enemy
+					p.homing = 3.0
+			get_parent().add_child(p)
+			p.global_position = mz
+			Gamepad.rumble(0.25, 0.3 if charged else 0.05, 0.12 if charged else 0.07)
+		"lob":
+			var b := camera.global_transform.basis
+			var dir := (-b.z + b.y * 0.12).normalized()
+			var p := ProjectileScript.new()
+			p.vel = dir * float(w.speed) + velocity * 0.3
+			p.grav = w.grav
+			p.damage = w.damage
+			p.kind = "explosive"
+			p.blast_radius = w.blast
+			p.color = w.color
+			p.size = 0.2
+			p.stretch = 1.3
+			p.with_light = true
+			p.life = 6.0
+			p.from_player = true
+			p.shooter = self
+			p.source_pos = global_position
+			get_parent().add_child(p)
+			p.global_position = mz
+			Gamepad.rumble(0.3, 0.5, 0.15)
+		"beam":
+			var hit := _aim_ray(_current_spread(w))
+			var end: Vector3 = hit.end
+			if hit.has("collider"):
+				var c: Object = hit.collider
+				if c != null and c.has_method("take_damage"):
+					register_hit(c.take_damage(w.damage, w.kind, global_position, end))
+				Effects.impact(self, end, hit.normal, w.color)
+			Effects.tracer(self, mz, end, w.color, 0.12)
+			Effects.flash(self, mz, w.color, 3.0, 4.0, 0.15)
+			Gamepad.rumble(0.4, 0.6, 0.2)
+	_kick(float(w.recoil) * (2.5 if charged else 1.0))
+	muzzle_light.light_color = w.flash
+	muzzle_light.light_energy = 3.0 if w.mode == "hitscan" else 2.5
+	Sfx.play_ui(self, w.sfx, float(w.get("sfx_vol", 0.0)) - 5.0 + (3.0 if charged else 0.0),
+		float(w.get("sfx_pitch", 1.0)) * (0.7 if charged else 1.0))
+	if Weapons.uses_mag(w) and w.ammo == 0 and w.reserve > 0:
 		_start_reload()
-
-
-func _fire_arc(w: Dictionary) -> void:
-	if w.overheated > 0.0:
-		return
-	fire_cd = w.rate
-	var hit := _aim_ray(_current_spread(w))
-	var mz: Vector3 = (muzzles[1] as Node3D).global_position
-	var end: Vector3 = hit.end
-	var dir := (end - mz).normalized()
-	if mz.distance_to(end) < 1.0:
-		dir = -camera.global_transform.basis.z
-	var p := ProjectileScript.new()
-	p.vel = dir * float(w.speed)
-	p.damage = w.damage
-	p.kind = "plasma"
-	p.color = Color(0.3, 0.85, 1.0)
-	p.size = 0.08
-	p.from_player = true
-	p.shooter = self
-	p.source_pos = global_position
-	get_parent().add_child(p)
-	p.global_position = mz
-	_kick(w.recoil)
-	muzzle_light.light_color = Color(0.4, 0.8, 1.0)
-	muzzle_light.light_energy = 2.5
-	Sfx.play_ui(self, "plasma", -6.0)
-	Gamepad.rumble(0.25, 0.05, 0.07)
-	w.heat += w.heat_per_shot
-	if w.heat >= 1.0:
-		w.heat = 1.0
-		w.overheated = 2.3
-		Sfx.play_ui(self, "overheat", -2.0)
-		notify("ARC CASTER OVERHEATED")
 
 
 func _kick(amount: float) -> void:
@@ -682,6 +785,71 @@ func _kick(amount: float) -> void:
 
 func shots_fired_tick() -> void:
 	pass
+
+
+# ---------------------------------------------------------------- weapon pickups
+
+## Finds the weapon you can pick up, and quietly takes ammo from dropped copies
+## of the guns you already carry.
+func _update_interact() -> void:
+	interact_target = null
+	var best := 1e9
+	var fwd := -global_transform.basis.z
+	for p in get_tree().get_nodes_in_group("weapon_pickup"):
+		var n := p as Node3D
+		var d := n.global_position - global_position
+		var flat := Vector2(d.x, d.z).length()
+		if flat > 2.0 or d.y < -1.0 or d.y > 2.4:
+			continue
+		var carried := _slot_of(p.state.id)
+		if carried >= 0:
+			if flat < 1.4 and Weapons.scavenge(weapons[carried], p.state):
+				Sfx.play_ui(self, "pickup", -6.0)
+				notify("+AMMO  %s" % weapons[carried].short)
+				p.touched()
+				if Weapons.is_empty(p.state) and not p.rack:
+					p.queue_free()
+			continue
+		# prefer what you're looking at
+		var score := flat - fwd.dot(Vector3(d.x, 0, d.z).normalized()) * 0.8
+		if score < best:
+			best = score
+			interact_target = p
+
+
+func _slot_of(id: String) -> int:
+	for i in weapons.size():
+		if weapons[i].id == id:
+			return i
+	return -1
+
+
+func _take(p: Node) -> void:
+	var st: Dictionary = p.take()
+	var slot := current
+	if weapons.size() < 2:
+		weapons.append(st)
+		slot = weapons.size() - 1
+	else:
+		_drop(weapons[current])
+		weapons[current] = st
+	interact_target = null
+	_refresh_viewmodels()
+	current = -1
+	_select_weapon(slot)
+	notify("PICKED UP %s" % st.name)
+	Sfx.play_ui(self, "pickup", -3.0)
+
+
+func _drop(st: Dictionary) -> void:
+	st.charge = 0.0
+	st.charging = false
+	var p := WeaponPickup.new()
+	p.state = st
+	get_parent().add_child(p)
+	var fwd := -global_transform.basis.z
+	p.global_position = global_position + fwd * 0.9 + Vector3.UP * 0.6
+	p.drop_velocity = fwd * 2.0 + Vector3.UP * 1.5
 
 
 func _throw_grenade() -> void:
@@ -811,14 +979,21 @@ func notify(t: String) -> void:
 
 
 func apply_pickup(kind: String) -> bool:
-	var carbine: Dictionary = weapons[0]
 	match kind:
 		"ammo":
-			if carbine.reserve >= carbine.max_reserve:
-				return false
-			carbine.reserve = mini(carbine.reserve + 96, carbine.max_reserve)
-			notify("+96 CARBINE ROUNDS")
-			return true
+			var got := false
+			for st in weapons:
+				if st.family != "human":
+					continue
+				if Weapons.uses_mag(st) and st.reserve < st.max_reserve:
+					st.reserve = mini(st.reserve + int(ceil(st.max_reserve * 0.3)), st.max_reserve)
+					got = true
+				elif Weapons.uses_battery(st) and st.battery < 1.0:
+					st.battery = minf(st.battery + 0.25, 1.0)
+					got = true
+			if got:
+				notify("+AMMO")
+			return got
 		"grenade":
 			if grenades >= max_grenades:
 				return false
@@ -831,26 +1006,36 @@ func apply_pickup(kind: String) -> bool:
 			health = minf(max_health, health + 40.0)
 			notify("+40 HEALTH")
 			return true
-		"supply":
-			var changed := false
-			if carbine.reserve < carbine.max_reserve:
-				carbine.reserve = carbine.max_reserve
-				changed = true
-			if grenades < 3:
-				grenades = 3
-				changed = true
-			if changed:
-				notify("RESUPPLIED  (cache recharges in 30s)")
-			return changed
 	return false
+
+
+## Ammo caches: tops up every carried weapon of that family (and frags at a
+## human cache). Returns false if there was nothing to refill.
+func refill(family: String) -> bool:
+	var changed := false
+	for st in weapons:
+		if st.family != family:
+			continue
+		if Weapons.uses_mag(st):
+			if st.reserve < st.max_reserve or st.ammo < st.mag:
+				st.reserve = st.max_reserve
+				changed = true
+		elif st.battery < 0.995:
+			st.battery = 1.0
+			changed = true
+	if family == "human" and grenades < 3:
+		grenades = 3
+		changed = true
+	return changed
 
 
 func on_wave_cleared() -> void:
 	health = minf(max_health, health + 30.0)
 	grenades = mini(grenades + 1, max_grenades)
-	var carbine: Dictionary = weapons[0]
-	carbine.reserve = mini(carbine.reserve + 64, carbine.max_reserve)
-	notify("WAVE CLEARED  +30 HEALTH  +1 FRAG  +64 ROUNDS")
+	for st in weapons:
+		if Weapons.uses_mag(st):
+			st.reserve = mini(st.reserve + int(ceil(st.max_reserve * 0.2)), st.max_reserve)
+	notify("WAVE CLEARED  +30 HEALTH  +1 FRAG  +AMMO")
 
 
 func _die() -> void:
@@ -913,10 +1098,13 @@ func _bot(delta: float) -> void:
 		if to_c.length() > 4.0:
 			rotation.y = lerp_angle(rotation.y, atan2(-to_c.x, -to_c.z), minf(4.0 * delta, 1.0))
 			in_move = Vector2(0, -1)
+	in_fire_just = in_fire
 	var w: Dictionary = weapons[current]
-	if current == 1 and w.overheated > 0.0:
-		in_switch = true
-	elif current == 0 and w.ammo == 0 and w.reserve == 0:
-		in_switch = true
-	elif current == 0 and w.ammo == 0:
+	var other := 1 - current
+	if w.overheated > 0.0 or Weapons.is_empty(w):
+		if weapons.size() > 1 and not Weapons.is_empty(weapons[other]) and weapons[other].overheated <= 0.0:
+			in_switch = true
+	elif Weapons.uses_mag(w) and w.ammo == 0:
 		in_reload = true
+	if w.mode == "beam" and w.charge >= w.charge_time:
+		in_fire = false

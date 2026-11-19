@@ -99,26 +99,38 @@ static func enemy(type: String, glow: Color) -> Dictionary:
 
 # ---------------------------------------------------------------- weapons / props
 
-## Weapon viewmodel. Guns are modelled along -X with the grip near the origin;
-## returned node points down -Z.
-static func gun(name: String, length: float) -> Node3D:
-	var inst: Node3D = _scene(ESS + name + ".gltf").instantiate()
+## Gun model scaled to `length` metres, pointing down -Z with the grip near
+## the origin. `path` is a full res:// path or a Sci-Fi Essentials gun name.
+## Essentials guns are modelled barrel-towards -X; the Ultimate Gun Pack ones
+## barrel-towards +X (barrel_plus_x).
+static func gun(path: String, length: float, barrel_plus_x := false) -> Node3D:
+	if not path.begins_with("res://"):
+		path = ESS + path + ".gltf"
+	var inst: Node3D = _scene(path).instantiate()
 	var root := Node3D.new()
 	root.add_child(inst)
 	var aabb := _aabb(inst)
 	var s := length / maxf(aabb.size.x, 0.01)
 	inst.scale = Vector3.ONE * s
-	inst.rotation.y = -PI / 2
+	inst.rotation.y = PI / 2 if barrel_plus_x else -PI / 2
+	root.set_meta("barrel_plus_x", barrel_plus_x)
 	for mi in inst.find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return root
+
+
+static func gun_available(path: String) -> bool:
+	if not path.begins_with("res://"):
+		path = ESS + path + ".gltf"
+	return ResourceLoader.exists(path)
 
 
 ## Returns the barrel tip of a gun built by gun(), in the gun root's space.
 static func gun_muzzle(root: Node3D) -> Vector3:
 	var inst := root.get_child(0) as Node3D
 	var aabb := _aabb(inst)
-	var tip := Vector3(aabb.position.x, aabb.position.y + aabb.size.y * 0.78, 0.0)
+	var x := aabb.end.x if root.get_meta("barrel_plus_x", false) else aabb.position.x
+	var tip := Vector3(x, aabb.position.y + aabb.size.y * 0.78, 0.0)
 	return inst.transform * tip
 
 

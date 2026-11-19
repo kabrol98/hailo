@@ -7,6 +7,7 @@ signal announce(text: String)
 
 const EnemyScript = preload("res://scripts/enemy.gd")
 const Sfx = preload("res://scripts/sfx.gd")
+const Difficulty = preload("res://scripts/difficulty.gd")
 
 var spawn_points: Array = []
 var player: Node3D
@@ -62,8 +63,9 @@ func _start_wave() -> void:
 
 func _composition(n: int) -> Array:
 	var list: Array = []
-	var stalkers := 2 + n
-	var troopers := 1 + int(n * 1.2)
+	var size := Difficulty.v("wave")
+	var stalkers := maxi(1, int(round((2 + n) * size)))
+	var troopers := maxi(1, int(round((1 + int(n * 1.2)) * size)))
 	var bulwarks := 0 if n < 3 else 1 + int((n - 3) / 3)
 	var lancers := 0 if n < 4 else 1 + int((n - 4) / 2)
 	if n % 5 == 0:

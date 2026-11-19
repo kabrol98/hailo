@@ -14,6 +14,7 @@ const DEFAULTS := {
 	"preset": "high",
 	"time_of_day": "day",
 	"vegetation": "kit",
+	"difficulty": "normal",
 	"models": "kit",
 	# graphics
 	"shadows": 3,
@@ -111,6 +112,9 @@ const OPTIONS := [
 	{"tab": "World", "key": "models", "label": "Enemy & weapon models", "type": "choice",
 		"choices": [["Animated asset pack", "kit"], ["Procedural", "procedural"]],
 		"hint": "Animated robots, textured guns and pickups from the Quaternius sci-fi packs, overgrown by the Thorn. Changing this rebuilds the level."},
+	{"tab": "Gameplay", "key": "difficulty", "label": "Difficulty", "type": "choice",
+		"choices": [["Easy", "easy"], ["Normal", "normal"], ["Hard", "hard"]],
+		"hint": "Enemy damage, toughness, accuracy and numbers, plus how many refills each ammo cache has. Best scores are kept per difficulty. Applies to enemies that spawn after you change it."},
 	{"tab": "Gameplay", "key": "fov", "label": "Field of view", "type": "slider",
 		"min": 65.0, "max": 100.0, "step": 1.0, "fmt": "%d°", "fmt_mul": 1.0},
 	{"tab": "Gameplay", "key": "sensitivity", "label": "Mouse sensitivity", "type": "slider",
